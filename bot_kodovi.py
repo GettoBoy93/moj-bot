@@ -26,19 +26,17 @@ dp = Dispatcher()
 def init_db():
     conn = sqlite3.connect("kodovi.db")
     cursor = conn.cursor()
-    # Tabela za kodove
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS kodovi (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             kod TEXT UNIQUE,
             founder TEXT,
             founder_user_id INTEGER,
-            broj_kopiranja INTEGER DEFAULT 0,
+            broj_kopiranja INTEGER DEFAULT 1,
             vreme_objave TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             aktivan INTEGER DEFAULT 1
         )
     """)
-    # Tabela za praćenje ko je već preuzeo koji kod (1 korisnik = 1 preuzimanje)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS preuzimanja (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,10 +56,18 @@ def dodaj_kod(kod, founder_name, founder_user_id):
     cursor = conn.cursor()
     vreme_sada = datetime.now()
     try:
+        # Kod startuje sa 1 preuzimanjem (founder)
         cursor.execute("""
-            INSERT INTO kodovi (kod, founder, founder_user_id, vreme_objave)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO kodovi (kod, founder, founder_user_id, broj_kopiranja, vreme_objave)
+            VALUES (?, ?, ?, 1, ?)
         """, (kod, founder_name, founder_user_id, vreme_sada))
+        
+        # Automatski upisujemo i founder-a u tabelu preuzimanja da ne može opet da klikne
+        cursor.execute("""
+            INSERT OR IGNORE INTO preuzimanja (kod, user_id)
+            VALUES (?, ?)
+        """, (kod, founder_user_id))
+        
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -70,10 +76,6 @@ def dodaj_kod(kod, founder_name, founder_user_id):
         conn.close()
 
 def zabelezi_preuzimanje(kod, user_id):
-    """
-    Vraća (uspesno, trenutni_broj_preuzimanja, poruka)
-    Ako je korisnik već preuzeo kod, vraća (False, broj, "VEĆ_PREUZETO")
-    """
     conn = sqlite3.connect("kodovi.db")
     cursor = conn.cursor()
     
@@ -83,7 +85,7 @@ def zabelezi_preuzimanje(kod, user_id):
         cursor.execute("SELECT broj_kopiranja FROM kodovi WHERE kod = ?", (kod,))
         res = cursor.fetchone()
         conn.close()
-        return False, res[0] if res else 0, "VEĆ_PREUZETO"
+        return False, res[0] if res else 1, "VEĆ_PREUZETO"
     
     # Provera limita 30 preuzimanja
     cursor.execute("SELECT broj_kopiranja, aktivan FROM kodovi WHERE kod = ?", (kod,))
@@ -93,14 +95,11 @@ def zabelezi_preuzimanje(kod, user_id):
         return False, res[0] if res else 30, "ISTEKAO_LIMIT"
 
     try:
-        # Zabeleži korisnika
         cursor.execute("INSERT INTO preuzimanja (kod, user_id) VALUES (?, ?)", (kod, user_id))
-        # Povećaj brojač
         cursor.execute("UPDATE kodovi SET broj_kopiranja = broj_kopiranja + 1 WHERE kod = ?", (kod,))
         cursor.execute("SELECT broj_kopiranja FROM kodovi WHERE kod = ?", (kod,))
         novi_broj = cursor.fetchone()[0]
         
-        # Ako je stiglo do 30, označi kao neaktivan
         if novi_broj >= 30:
             cursor.execute("UPDATE kodovi SET aktivan = 0 WHERE kod = ?", (kod,))
             
@@ -109,7 +108,7 @@ def zabelezi_preuzimanje(kod, user_id):
         return True, novi_broj, "USPESNO"
     except Exception as e:
         conn.close()
-        return False, 0, "GRESKA"
+        return False, 1, "GRESKA"
 
 def dohvati_aktivne_kodove():
     conn = sqlite3.connect("kodovi.db")
@@ -143,7 +142,7 @@ def dohvati_aktivne_kodove():
         })
     return rezultat
 
-def napravi_tastaturu_za_kod(kod, broj_kopiranja=0):
+def napravi_tastaturu_za_kod(kod, broj_kopiranja=1):
     builder = InlineKeyboardBuilder()
     builder.button(
         text=f"🎁 Preuzmi kod ({broj_kopiranja}/30)",
@@ -193,7 +192,6 @@ async def obradi_poruku(message: types.Message):
     for kod in pronadjeni_kodovi:
         uspesno = dodaj_kod(kod, username or korisnik.first_name, user_id)
         if uspesno:
-            # Obrisi originalnu poruku founder-a
             try:
                 await message.delete()
             except Exception:
@@ -206,13 +204,13 @@ async def obradi_poruku(message: types.Message):
                 f"👉 <i>Dodirnite kod iznad da ga kopirate, ili kliknite na dugme ispod da zabeležite preuzimanje.</i>"
             )
             
+            # Startuje od 1/30
             nova_poruka = await message.answer(
                 tekst_poruke,
                 parse_mode=ParseMode.HTML,
-                reply_markup=napravi_tastaturu_za_kod(kod, 0)
+                reply_markup=napravi_tastaturu_za_kod(kod, 1)
             )
             
-            # PIN-ovanje poruke sa zvučnim obaveštenjem (stigne svima, čak i ako je na mute)
             try:
                 await bot.pin_chat_message(
                     chat_id=message.chat.id,
@@ -242,7 +240,6 @@ async def obradi_preuzimanje(callback_query: types.CallbackQuery):
             show_alert=True
         )
     elif uspesno:
-        # Ažuriraj tekst na dugmetu sa novim brojem preuzimanja
         try:
             await callback_query.message.edit_reply_markup(
                 reply_markup=napravi_tastaturu_za_kod(kod, novi_broj)
