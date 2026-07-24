@@ -12,7 +12,7 @@ import asyncio
 logging.basicConfig(level=logging.INFO)
 
 
-BOT_TOKEN = os.getenv("8864145955:AAEY9b4vMaVNQ_cF55yfH4rl8RcZnQgZKwc")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 KOD_REGEX = r'\b[A-Za-z0-9]{6}\b'
 
 DATA_DIR = "/app/data"
