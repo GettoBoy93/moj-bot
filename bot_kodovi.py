@@ -2,10 +2,10 @@ import re
 import sqlite3
 import logging
 import os
+import urllib.request
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 import asyncio
 
@@ -30,7 +30,7 @@ else:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- BAZA PODATAKA (SQLite) ---
+# --- BAZA PODATAKA ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -39,19 +39,11 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             kod TEXT UNIQUE,
             founder TEXT,
-            founder_user_id INTEGER,
-            broj_kopiranja INTEGER DEFAULT 1,
+            chat_id INTEGER,
+            message_id INTEGER,
+            broj_clanova INTEGER DEFAULT 1,
             vreme_objave TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             aktivan INTEGER DEFAULT 1
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS preuzimanja (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            kod TEXT,
-            user_id INTEGER,
-            vreme TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(kod, user_id)
         )
     """)
     conn.commit()
@@ -59,21 +51,15 @@ def init_db():
 
 init_db()
 
-def dodaj_kod(kod, founder_name, founder_user_id):
+def dodaj_kod(kod, founder_name, chat_id, message_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     vreme_sada = datetime.now()
     try:
         cursor.execute("""
-            INSERT INTO kodovi (kod, founder, founder_user_id, broj_kopiranja, vreme_objave)
-            VALUES (?, ?, ?, 1, ?)
-        """, (kod, founder_name, founder_user_id, vreme_sada))
-        
-        cursor.execute("""
-            INSERT OR IGNORE INTO preuzimanja (kod, user_id)
-            VALUES (?, ?)
-        """, (kod, founder_user_id))
-        
+            INSERT INTO kodovi (kod, founder, chat_id, message_id, broj_clanova, vreme_objave)
+            VALUES (?, ?, ?, ?, 1, ?)
+        """, (kod, founder_name, chat_id, message_id, vreme_sada))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -81,109 +67,154 @@ def dodaj_kod(kod, founder_name, founder_user_id):
     finally:
         conn.close()
 
-def zabelezi_preuzimanje(kod, user_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT id FROM preuzimanja WHERE kod = ? AND user_id = ?", (kod, user_id))
-    if cursor.fetchone():
-        cursor.execute("SELECT broj_kopiranja FROM kodovi WHERE kod = ?", (kod,))
-        res = cursor.fetchone()
-        conn.close()
-        return False, res[0] if res else 1, "VEĆ_PREUZETO"
-    
-    cursor.execute("SELECT broj_kopiranja, aktivan FROM kodovi WHERE kod = ?", (kod,))
-    res = cursor.fetchone()
-    if not res or res[0] >= 30 or res[1] == 0:
-        conn.close()
-        return False, res[0] if res else 30, "ISTEKAO_LIMIT"
-
-    try:
-        cursor.execute("INSERT INTO preuzimanja (kod, user_id) VALUES (?, ?)", (kod, user_id))
-        cursor.execute("UPDATE kodovi SET broj_kopiranja = broj_kopiranja + 1 WHERE kod = ?", (kod,))
-        cursor.execute("SELECT broj_kopiranja FROM kodovi WHERE kod = ?", (kod,))
-        novi_broj = cursor.fetchone()[0]
-        
-        if novi_broj >= 30:
-            cursor.execute("UPDATE kodovi SET aktivan = 0 WHERE kod = ?", (kod,))
-            
-        conn.commit()
-        conn.close()
-        return True, novi_broj, "USPESNO"
-    except Exception as e:
-        conn.close()
-        return False, 1, "GRESKA"
-
-def dohvati_aktivne_kodove():
+def dohvati_sve_aktivne_iz_baze():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     granica = datetime.now() - timedelta(minutes=60)
     cursor.execute("""
-        SELECT kod, founder, broj_kopiranja, vreme_objave 
+        SELECT id, kod, founder, chat_id, message_id, broj_clanova, vreme_objave 
         FROM kodovi 
-        WHERE aktivan = 1 AND broj_kopiranja < 30 AND vreme_objave >= ?
-        ORDER BY vreme_objave DESC
+        WHERE aktivan = 1 AND vreme_objave >= ?
     """, (granica,))
     redovi = cursor.fetchall()
     conn.close()
-    
-    rezultat = []
-    sada = datetime.now()
-    for kod, founder, broj_kopiranja, vreme_objave in redovi:
-        if isinstance(vreme_objave, str):
-            vreme_dt = datetime.fromisoformat(vreme_objave)
-        else:
-            vreme_dt = vreme_objave
-        
-        proteklo_minuta = int((sada - vreme_dt).total_seconds() // 60)
-        preostalo_minuta = max(0, 60 - proteklo_minuta)
-        
-        rezultat.append({
-            'kod': kod,
-            'founder': founder,
-            'broj_kopiranja': broj_kopiranja,
-            'preostalo_minuta': preostalo_minuta
-        })
-    return rezultat
+    return redovi
 
-def napravi_tastaturu_za_kod(kod, broj_kopiranja=1):
-    builder = InlineKeyboardBuilder()
-    builder.button(
-        text=f"🎁 Preuzmi kod ({broj_kopiranja}/30)",
-        callback_data=f"preuzmi_{kod}"
+def azuriraj_broj_clanova_u_bazi(kod_id, novi_broj, aktivan=1):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE kodovi SET broj_clanova = ?, aktivan = ? WHERE id = ?", (novi_broj, aktivan, kod_id))
+    conn.commit()
+    conn.close()
+
+def deaktiviraj_istekle():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    granica = datetime.now() - timedelta(minutes=60)
+    cursor.execute("UPDATE kodovi SET aktivan = 0 WHERE vreme_objave < ? OR broj_clanova >= 30", (granica,))
+    conn.commit()
+    conn.close()
+
+# --- SKRAPOVANJE PODATAKA SA PERIA SAJTA ---
+def proveri_broj_na_sajtu(kod):
+    url = f"https://miningperia.com/pages/join.php?custom={kod}"
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            html = response.read().decode('utf-8', errors='ignore')
+            # Traženje broja članova u formatu "X/30" ili broja iz HTML-a
+            match = re.search(r'(\d+)\s*/\s*30', html)
+            if match:
+                return int(match.group(1))
+            # Alternativna provera ako piše broj u nekom drugom obliku
+            numbers = re.findall(r'\b\d+\b', html)
+            for n in numbers:
+                val = int(n)
+                if 1 <= val <= 30:
+                    return val
+    except Exception as e:
+        logging.error(f"Greška pri proveri sajta za kod {kod}: {e}")
+    return None
+
+# --- TEKST PORUKE ---
+def generisi_tekst_poruke(kod, founder, broj_clanova, preostalo_minuta):
+    if broj_clanova >= 30 or preostalo_minuta <= 0:
+        return (
+            f"❌ <b>KOD ISTEKAO / GRUPA POPUNJENA!</b>\n\n"
+            f"Kod: <code>{kod}</code> (Osnivač: {founder})\n"
+            f"Status: <b>{broj_clanova}/30 članova</b>"
+        )
+    
+    return (
+        f"🚨 <b>NOVI KOD OD OSNIVAČA:</b> {founder}\n\n"
+        f"Pridruži se PERIA grupi za rudarenje!\n"
+        f"Otvori <b>MiningPeria → Mining → Custom</b> i unesi kod:\n\n"
+        f"👉 <code>{kod}</code> 👈 <i>(Dodirnite kod da ga kopirate)</i>\n\n"
+        f"📊 Popunjeno: <b>{broj_clanova}/30</b>\n"
+        f"⏱ Važi još: <b>{preostalo_minuta} min</b>"
     )
-    return builder.as_markup()
+
+# --- BACKROUND TASK (Provera na svakih 15 sekundi) ---
+async def petlja_za_azuriranje():
+    while True:
+        try:
+            deaktiviraj_istekle()
+            aktivni = dohvati_sve_aktivne_iz_baze()
+            sada = datetime.now()
+            
+            for kod_id, kod, founder, chat_id, message_id, trenutni_broj, vreme_objave in aktivni:
+                if isinstance(vreme_objave, str):
+                    vreme_dt = datetime.fromisoformat(vreme_objave)
+                else:
+                    vreme_dt = vreme_objave
+                
+                proteklo = int((sada - vreme_dt).total_seconds() // 60)
+                preostalo = max(0, 60 - proteklo)
+                
+                # Proveravamo sajt za stvarni broj
+                novi_broj = proveri_broj_na_sajtu(kod)
+                
+                if novi_broj is None:
+                    novi_broj = trenutni_broj
+
+                is_aktivan = 1
+                if novi_broj >= 30 or preostalo <= 0:
+                    is_aktivan = 0
+
+                # Ako se broj promenio ili je kod istekao, osvežavamo poruku na Telegramu
+                if novi_broj != trenutni_broj or not is_aktivan or (preostalo % 5 == 0):
+                    azuriraj_broj_clanova_u_bazi(kod_id, novi_broj, is_aktivan)
+                    novi_tekst = generisi_tekst_poruke(kod, founder, novi_broj, preostalo)
+                    
+                    try:
+                        await bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=novi_tekst,
+                            parse_mode=ParseMode.HTML
+                        )
+                    except Exception:
+                        pass
+        except Exception as e:
+            logging.error(f"Greška u pozadinskoj petlji: {e}")
+            
+        await asyncio.sleep(15)
 
 # --- HANDLERI ZA KOMANDE ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("Zdravo! Ja sam bot za kodove. Pratite objave u grupi za najnovije kodove sa brzom opcijom kopiranja.")
+    await message.answer("Zdravo! Ja sam bot za PERIA kodove.")
 
 @dp.message(Command("aktivno"))
 async def cmd_aktivno(message: types.Message):
-    aktivni = dohvati_aktivne_kodove()
+    deaktiviraj_istekle()
+    aktivni = dohvati_sve_aktivne_iz_baze()
+    
     if not aktivni:
         await message.answer("Trenutno nema aktivnih kodova.")
         return
     
-    tekst = "<b>🔥 AKTIVNI KODOVI:</b>\n<i>(Dodirnite kod da ga kopirate ili kliknite na dugme ispod da zabeležite preuzimanje)</i>\n\n"
-    builder = InlineKeyboardBuilder()
+    tekst = "<b>🔥 AKTIVNI KODOVI:</b>\n<i>(Dodirnite kod da ga kopirate)</i>\n\n"
+    sada = datetime.now()
     
-    for item in aktivni:
+    for kod_id, kod, founder, chat_id, message_id, broj_clanova, vreme_objave in aktivni:
+        if isinstance(vreme_objave, str):
+            vreme_dt = datetime.fromisoformat(vreme_objave)
+        else:
+            vreme_dt = vreme_objave
+            
+        proteklo = int((sada - vreme_dt).total_seconds() // 60)
+        preostalo = max(0, 60 - proteklo)
+        
         tekst += (
-            f"• <code>{item['kod']}</code> (Osnivač: {item['founder']})\n"
-            f"   ⏱ Preostalo: <b>{item['preostalo_minuta']} min</b> | 📊 Preuzeto: <b>{item['broj_kopiranja']}/30</b>\n\n"
-        )
-        builder.button(
-            text=f"🎁 Preuzmi {item['kod']} ({item['broj_kopiranja']}/30)",
-            callback_data=f"preuzmi_{item['kod']}"
+            f"• <code>{kod}</code> (Osnivač: {founder})\n"
+            f"   ⏱ Preostalo: <b>{preostalo} min</b> | 📊 Članova: <b>{broj_clanova}/30</b>\n\n"
         )
     
-    builder.adjust(1)
-    await message.answer(tekst, parse_mode=ParseMode.HTML, reply_markup=builder.as_markup())
+    await message.answer(tekst, parse_mode=ParseMode.HTML)
 
-# --- HANDLER ZA DETEKCIJU KODOVA (POŠILJALAC: FOUNDER) ---
+# --- HANDLER ZA OBJAVU KODA ---
 
 @dp.message(F.text)
 async def obradi_poruku(message: types.Message):
@@ -191,7 +222,6 @@ async def obradi_poruku(message: types.Message):
     username = f"@{korisnik.username}" if korisnik.username else ""
     user_id = korisnik.id
     
-    # Provera bez obzira na velika/mala slova
     is_founder = (username.lower() in [u.lower() for u in FOUNDERI_USERNAMES]) or (user_id in FOUNDERI_IDS)
     if not is_founder:
         return
@@ -201,88 +231,35 @@ async def obradi_poruku(message: types.Message):
         return
 
     for kod in pronadjeni_kodovi:
-        uspesno = dodaj_kod(kod, username or korisnik.first_name, user_id)
-        if uspesno:
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            
-            prikaz_imena = username if username else korisnik.first_name
-            tekst_poruke = (
-                f"🚨 <b>NOVI KOD OD OSNIVAČA:</b> {prikaz_imena}\n\n"
-                f"Kod: <code>{kod}</code>\n\n"
-                f"👉 <i>Dodirnite kod iznad da ga kopirate, ili kliknite na dugme ispod da zabeležite preuzimanje.</i>"
-            )
-            
-            nova_poruka = await message.answer(
-                tekst_poruke,
-                parse_mode=ParseMode.HTML,
-                reply_markup=napravi_tastaturu_za_kod(kod, 1)
-            )
-            
-            try:
-                await bot.pin_chat_message(
-                    chat_id=message.chat.id,
-                    message_id=nova_poruka.message_id,
-                    disable_notification=False
-                )
-            except Exception as e:
-                logging.error(f"Neuspešno pinovanje: {e}")
-
-# --- HANDLER ZA KLIK NA DUGME "PREUZMI KOD" ---
-
-@dp.callback_query(F.data.startswith("preuzmi_"))
-async def obradi_preuzimanje(callback_query: types.CallbackQuery):
-    kod = callback_query.data.split("_")[1]
-    user_id = callback_query.from_user.id
-    
-    uspesno, novi_broj, status = zabelezi_preuzimanje(kod, user_id)
-    
-    if status == "VEĆ_PREUZETO":
-        await callback_query.answer(
-            f"⚠️ Već ste preuzeli kod {kod}! Svaki član može preuzeti kod samo jednom.",
-            show_alert=True
-        )
-    elif status == "ISTEKAO_LIMIT":
-        await callback_query.answer(
-            f"❌ Kod {kod} je već dostigao maksimalnih 30 preuzimanja!",
-            show_alert=True
-        )
-    elif uspesno:
+        prikaz_imena = username if username else korisnik.first_name
+        
+        # Prvo brišemo originalnu poruku osnivača
         try:
-            old_markup = callback_query.message.reply_markup
-            new_builder = InlineKeyboardBuilder()
-            
-            for row in old_markup.inline_keyboard:
-                for btn in row:
-                    if btn.callback_data == f"preuzmi_{kod}":
-                        new_builder.button(
-                            text=f"🎁 Preuzmi kod {kod} ({novi_broj}/30)",
-                            callback_data=f"preuzmi_{kod}"
-                        )
-                    else:
-                        new_builder.button(
-                            text=btn.text,
-                            callback_data=btn.callback_data
-                        )
-            
-            new_builder.adjust(1)
-            await callback_query.message.edit_reply_markup(
-                reply_markup=new_builder.as_markup()
-            )
+            await message.delete()
         except Exception:
             pass
+            
+        tekst_poruke = generisi_tekst_poruke(kod, prikaz_imena, 1, 60)
         
-        await callback_query.answer(
-            f"✅ Uspešno ste preuzeli kod: {kod}\nUkupno preuzeto: {novi_broj}/30",
-            show_alert=True
+        nova_poruka = await message.answer(
+            tekst_poruke,
+            parse_mode=ParseMode.HTML
         )
-    else:
-        await callback_query.answer("Došlo je do greške pri preuzimanju.", show_alert=True)
+        
+        dodaj_kod(kod, prikaz_imena, nova_poruka.chat.id, nova_poruka.message_id)
+        
+        try:
+            await bot.pin_chat_message(
+                chat_id=message.chat.id,
+                message_id=nova_poruka.message_id,
+                disable_notification=False
+            )
+        except Exception as e:
+            logging.error(f"Neuspešno pinovanje: {e}")
 
 async def main():
-    print("Bot je pokrenut...")
+    print("Bot je pokrenut sa automatskim praćenjem sajta...")
+    asyncio.create_task(petlja_za_azuriranje())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
