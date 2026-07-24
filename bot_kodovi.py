@@ -11,6 +11,9 @@ from aiogram.enums import ParseMode
 from aiogram.types import WebAppInfo
 import asyncio
 
+# Logging za praćenje grešaka
+logging.basicConfig(level=logging.INFO)
+
 # --- PODEŠAVANJA ---
 BOT_TOKEN = "8864145955:AAFNAQcoCFUxgPF6AxaExPQ1oos2VOVgZ8Y"
 
@@ -21,7 +24,7 @@ FOUNDERI_USERNAMES = [
 ]
 FOUNDERI_IDS = []
 
-# Detekcija koda (6 karaktera - slova i brojevi)
+# Detekcija koda (bilo kojih 6 karaktera slova/brojeva)
 KOD_REGEX = r'\b[A-Za-z0-9]{6}\b'
 
 DATA_DIR = "/app/data"
@@ -33,7 +36,7 @@ else:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- BAZA PODATAKA (SQLite) ---
+# --- BAZA PODATAKA ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -83,70 +86,6 @@ def dodaj_kod(kod, founder_name, founder_user_id):
         return False
     finally:
         conn.close()
-
-def zabelezi_preuzimanje(kod, user_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT vreme_objave, broj_kopiranja, aktivan FROM kodovi WHERE kod = ?", (kod,))
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return False, 30, "NEPOSTOJECE"
-        
-    vreme_objave, trenutni_broj, aktivan = row
-    if isinstance(vreme_objave, str):
-        vreme_dt = datetime.fromisoformat(vreme_objave.replace(" ", "T"))
-    else:
-        vreme_dt = vreme_objave
-
-    if (datetime.now() - vreme_dt).total_seconds() > 3600 or aktivan == 0:
-        cursor.execute("UPDATE kodovi SET aktivan = 0 WHERE kod = ?", (kod,))
-        conn.commit()
-        conn.close()
-        return False, trenutni_broj, "ISTEKAO_TAJMER"
-
-    cursor.execute("SELECT id FROM preuzimanja WHERE kod = ? AND user_id = ?", (kod, user_id))
-    if cursor.fetchone():
-        conn.close()
-        return False, trenutni_broj, "VEĆ_PREUZETO"
-    
-    if trenutni_broj >= 30:
-        conn.close()
-        return False, 30, "ISTEKAO_LIMIT"
-
-    try:
-        cursor.execute("INSERT INTO preuzimanja (kod, user_id) VALUES (?, ?)", (kod, user_id))
-        cursor.execute("UPDATE kodovi SET broj_kopiranja = broj_kopiranja + 1 WHERE kod = ?", (kod,))
-        cursor.execute("SELECT broj_kopiranja FROM kodovi WHERE kod = ?", (kod,))
-        novi_broj = cursor.fetchone()[0]
-        
-        if novi_broj >= 30:
-            cursor.execute("UPDATE kodovi SET aktivan = 0 WHERE kod = ?", (kod,))
-            
-        conn.commit()
-        conn.close()
-        return True, novi_broj, "USPESNO"
-    except Exception:
-        conn.close()
-        return False, 1, "GRESKA"
-
-def dohvati_kod_info(kod):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT founder, broj_kopiranja, vreme_objave, aktivan FROM kodovi WHERE kod = ?", (kod,))
-    res = cursor.fetchone()
-    conn.close()
-    if res:
-        founder, broj, vreme, aktivan = res
-        if isinstance(vreme, str):
-            vreme_dt = datetime.fromisoformat(vreme.replace(" ", "T"))
-        else:
-            vreme_dt = vreme
-        proteklo = int((datetime.now() - vreme_dt).total_seconds() // 60)
-        preostalo = max(0, 60 - proteklo)
-        return founder, broj, preostalo, aktivan
-    return None, 1, 0, 0
 
 def dohvati_aktivne_kodove():
     conn = sqlite3.connect(DB_PATH)
@@ -258,6 +197,7 @@ async def obradi_poruku(message: types.Message):
                 f"⏱ Važi još: <b>60 min</b>"
             )
             
+            # Najsigurnije slanje bez mogućnosti blokade
             try:
                 nova_poruka = await message.answer(
                     tekst_poruke,
@@ -280,37 +220,7 @@ async def obradi_poruku(message: types.Message):
                     logging.error(f"Neuspešno pinovanje: {e}")
 
             except Exception as e:
-                logging.error(f"Greška pri slanju poruke sa kodom: {e}")
-
-# --- HANDLER ZA SINKRONIZACIJU IZ WEBAPP-A ---
-
-@dp.message(F.web_app_data)
-async def obradi_web_app_podatke(message: types.Message):
-    try:
-        data = json.loads(message.web_app_data.data)
-        kod = data.get("kod")
-        user_id = message.from_user.id
-        
-        if kod:
-            uspesno, novi_broj, status = zabelezi_preuzimanje(kod, user_id)
-            founder, trenutni_broj, preostalo, aktivan = dohvati_kod_info(kod)
-            
-            tekst_grupa = (
-                f"🚨 <b>NOVI KOD OD OSNIVAČA:</b> {founder}\n\n"
-                f"Pridruži se PERIA grupi za rudarenje!\n"
-                f"Otvori <b>MiningPeria → Mining → Custom</b>\n\n"
-                f"👉 <i>Kliknite na dugme ispod da preuzmete kod!</i>\n\n"
-                f"📊 Popunjeno: <b>{novi_broj}/30</b>\n"
-                f"⏱ Važi još: <b>{preostalo} min</b>"
-            )
-            
-            await message.answer(
-                tekst_grupa,
-                parse_mode=ParseMode.HTML,
-                reply_markup=napravi_tastaturu_za_kod(kod, novi_broj)
-            )
-    except Exception as e:
-        logging.error(f"Greška pri obradi WebApp podataka: {e}")
+                logging.error(f"Greška pri slanju nove poruke: {e}")
 
 async def main():
     print("Bot je pokrenut...")
