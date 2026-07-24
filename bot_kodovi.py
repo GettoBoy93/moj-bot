@@ -181,7 +181,6 @@ def dohvati_aktivne_kodove():
 
 def napravi_tastaturu_za_kod(kod, broj_kopiranja=1):
     builder = InlineKeyboardBuilder()
-    # Povezivanje na WebApp interfejs za prikaz i lak kopir koda
     webapp_url = f"https://miningperia.com/pages/join.php?custom={kod}"
     builder.button(
         text=f"🎁 Preuzmi kod ({broj_kopiranja}/30)",
@@ -218,10 +217,14 @@ async def cmd_aktivno(message: types.Message):
     builder.adjust(1)
     await message.answer(tekst, parse_mode=ParseMode.HTML, reply_markup=builder.as_markup())
 
-# --- HANDLER ZA OBJAVU KODA OD OSNIVAČA ---
+# --- HANDLER ZA DETEKCIJU KODOVA OD OSNIVAČA ---
 
 @dp.message(F.text)
 async def obradi_poruku(message: types.Message):
+    # Ignoši komande da ne upadaju u detekciju kodova
+    if message.text.startswith("/"):
+        return
+
     korisnik = message.from_user
     username = f"@{korisnik.username}" if korisnik.username else ""
     user_id = korisnik.id
@@ -249,20 +252,20 @@ async def obradi_poruku(message: types.Message):
             )
             
             try:
-                # 1. Prvo šaljemo novu poruku
+                # 1. Prvo pošalji novu poruku
                 nova_poruka = await message.answer(
                     tekst_poruke,
                     parse_mode=ParseMode.HTML,
                     reply_markup=napravi_tastaturu_za_kod(kod, 1)
                 )
                 
-                # 2. Tek ako je nova poruka uspešno poslata, brišemo staru
+                # 2. Tek ako je poslata, obriši staru
                 try:
                     await message.delete()
                 except Exception as e:
                     logging.error(f"Neuspešno brisanje originalne poruke: {e}")
 
-                # 3. Pinujemo novu poruku
+                # 3. Pinuj novu poruku
                 try:
                     await bot.pin_chat_message(
                         chat_id=message.chat.id,
@@ -273,7 +276,6 @@ async def obradi_poruku(message: types.Message):
                     logging.error(f"Neuspešno pinovanje: {e}")
 
             except Exception as e:
-                # Ako slanje nove poruke ne uspe, obavesti u konzoli/logu
                 logging.error(f"Greška pri slanju nove poruke sa kodom: {e}")
 
 # --- HANDLER ZA SINKRONIZACIJU IZ WEBAPP-A ---
