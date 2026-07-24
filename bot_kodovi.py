@@ -1,6 +1,7 @@
 import re
 import sqlite3
 import logging
+import os
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -13,18 +14,25 @@ BOT_TOKEN = "8864145955:AAFNAQcoCFUxgPF6AxaExPQ1oos2VOVgZ8Y"
 
 FOUNDERI_USERNAMES = [
     "@PERIABOY", "@Goran1974m", "@Bahro67", "@Stuxnet992", "@Josip0107",
-    "@Snave31", "@jagodica113", "@evanescence83", "@rajder987", "@AleksandarVujic", "@Alessandro1973Vuk"
+    "@Snave31", "@jagodica113", "@evanescence83", "@rajder987", "@AleksandarVujic",
+    "@Alessandro1973Vuk"
 ]
 FOUNDERI_IDS = []
 
 KOD_REGEX = r'\b[A-Z0-9]{6}\b'
+
+DATA_DIR = "/app/data"
+if os.path.exists(DATA_DIR):
+    DB_PATH = os.path.join(DATA_DIR, "kodovi.db")
+else:
+    DB_PATH = "kodovi.db"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # --- BAZA PODATAKA (SQLite) ---
 def init_db():
-    conn = sqlite3.connect("kodovi.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS kodovi (
@@ -52,17 +60,15 @@ def init_db():
 init_db()
 
 def dodaj_kod(kod, founder_name, founder_user_id):
-    conn = sqlite3.connect("kodovi.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     vreme_sada = datetime.now()
     try:
-        # Kod startuje sa 1 preuzimanjem (founder)
         cursor.execute("""
             INSERT INTO kodovi (kod, founder, founder_user_id, broj_kopiranja, vreme_objave)
             VALUES (?, ?, ?, 1, ?)
         """, (kod, founder_name, founder_user_id, vreme_sada))
         
-        # Automatski upisujemo i founder-a u tabelu preuzimanja da ne može opet da klikne
         cursor.execute("""
             INSERT OR IGNORE INTO preuzimanja (kod, user_id)
             VALUES (?, ?)
@@ -76,10 +82,9 @@ def dodaj_kod(kod, founder_name, founder_user_id):
         conn.close()
 
 def zabelezi_preuzimanje(kod, user_id):
-    conn = sqlite3.connect("kodovi.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Provera da li je već preuzeo
     cursor.execute("SELECT id FROM preuzimanja WHERE kod = ? AND user_id = ?", (kod, user_id))
     if cursor.fetchone():
         cursor.execute("SELECT broj_kopiranja FROM kodovi WHERE kod = ?", (kod,))
@@ -87,7 +92,6 @@ def zabelezi_preuzimanje(kod, user_id):
         conn.close()
         return False, res[0] if res else 1, "VEĆ_PREUZETO"
     
-    # Provera limita 30 preuzimanja
     cursor.execute("SELECT broj_kopiranja, aktivan FROM kodovi WHERE kod = ?", (kod,))
     res = cursor.fetchone()
     if not res or res[0] >= 30 or res[1] == 0:
@@ -111,7 +115,7 @@ def zabelezi_preuzimanje(kod, user_id):
         return False, 1, "GRESKA"
 
 def dohvati_aktivne_kodove():
-    conn = sqlite3.connect("kodovi.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     granica = datetime.now() - timedelta(minutes=60)
     cursor.execute("""
@@ -163,15 +167,21 @@ async def cmd_aktivno(message: types.Message):
         await message.answer("Trenutno nema aktivnih kodova.")
         return
     
-    tekst = "<b>🔥 AKTIVNI KODOVI:</b>\n<i>(Dodirnite kod da ga kopirate)</i>\n\n"
+    tekst = "<b>🔥 AKTIVNI KODOVI:</b>\n<i>(Dodirnite kod da ga kopirate ili kliknite na dugme ispod da zabeležite preuzimanje)</i>\n\n"
+    builder = InlineKeyboardBuilder()
     
     for item in aktivni:
         tekst += (
             f"• <code>{item['kod']}</code> (Osnivač: {item['founder']})\n"
             f"   ⏱ Preostalo: <b>{item['preostalo_minuta']} min</b> | 📊 Preuzeto: <b>{item['broj_kopiranja']}/30</b>\n\n"
         )
+        builder.button(
+            text=f"🎁 Preuzmi {item['kod']} ({item['broj_kopiranja']}/30)",
+            callback_data=f"preuzmi_{item['kod']}"
+        )
     
-    await message.answer(tekst, parse_mode=ParseMode.HTML)
+    builder.adjust(1)
+    await message.answer(tekst, parse_mode=ParseMode.HTML, reply_markup=builder.as_markup())
 
 # --- HANDLER ZA DETEKCIJU KODOVA (POŠILJALAC: FOUNDER) ---
 
@@ -181,7 +191,8 @@ async def obradi_poruku(message: types.Message):
     username = f"@{korisnik.username}" if korisnik.username else ""
     user_id = korisnik.id
     
-    is_founder = (username in FOUNDERI_USERNAMES) or (user_id in FOUNDERI_IDS)
+    # Provera bez obzira na velika/mala slova
+    is_founder = (username.lower() in [u.lower() for u in FOUNDERI_USERNAMES]) or (user_id in FOUNDERI_IDS)
     if not is_founder:
         return
 
@@ -204,7 +215,6 @@ async def obradi_poruku(message: types.Message):
                 f"👉 <i>Dodirnite kod iznad da ga kopirate, ili kliknite na dugme ispod da zabeležite preuzimanje.</i>"
             )
             
-            # Startuje od 1/30
             nova_poruka = await message.answer(
                 tekst_poruke,
                 parse_mode=ParseMode.HTML,
@@ -241,8 +251,25 @@ async def obradi_preuzimanje(callback_query: types.CallbackQuery):
         )
     elif uspesno:
         try:
+            old_markup = callback_query.message.reply_markup
+            new_builder = InlineKeyboardBuilder()
+            
+            for row in old_markup.inline_keyboard:
+                for btn in row:
+                    if btn.callback_data == f"preuzmi_{kod}":
+                        new_builder.button(
+                            text=f"🎁 Preuzmi kod {kod} ({novi_broj}/30)",
+                            callback_data=f"preuzmi_{kod}"
+                        )
+                    else:
+                        new_builder.button(
+                            text=btn.text,
+                            callback_data=btn.callback_data
+                        )
+            
+            new_builder.adjust(1)
             await callback_query.message.edit_reply_markup(
-                reply_markup=napravi_tastaturu_za_kod(kod, novi_broj)
+                reply_markup=new_builder.as_markup()
             )
         except Exception:
             pass
