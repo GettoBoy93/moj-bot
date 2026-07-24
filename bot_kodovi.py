@@ -24,39 +24,44 @@ else:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# --- BAZA PODATAKA ---
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS kodovi (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            kod TEXT UNIQUE,
-            founder TEXT,
-            founder_user_id INTEGER,
-            broj_kopiranja INTEGER DEFAULT 1,
-            vreme_objave TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            aktivan INTEGER DEFAULT 1
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS preuzimanja (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            kod TEXT,
-            user_id INTEGER,
-            vreme TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(kod, user_id)
-        )
-    """)
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS kodovi (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kod TEXT UNIQUE,
+                founder TEXT,
+                founder_user_id INTEGER,
+                broj_kopiranja INTEGER DEFAULT 1,
+                vreme_objave TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                aktivan INTEGER DEFAULT 1
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS preuzimanja (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kod TEXT,
+                user_id INTEGER,
+                vreme TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(kod, user_id)
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Greska pri inickalizaciji baze: {e}")
 
 init_db()
 
 def dodaj_kod(kod, founder_name, founder_user_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    vreme_sada = datetime.now()
     try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        vreme_sada = datetime.now()
+        
         cursor.execute("""
             INSERT INTO kodovi (kod, founder, founder_user_id, broj_kopiranja, vreme_objave)
             VALUES (?, ?, ?, 1, ?)
@@ -68,16 +73,17 @@ def dodaj_kod(kod, founder_name, founder_user_id):
         """, (kod, founder_user_id))
         
         conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
-    finally:
         conn.close()
+        return True, "OK"
+    except sqlite3.IntegrityError:
+        return False, "KOD_POSTOJI"
+    except Exception as e:
+        return False, str(e)
 
 def dohvati_aktivne_kodove():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
     try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
         cursor.execute("""
             SELECT kod, founder, broj_kopiranja, vreme_objave 
             FROM kodovi 
@@ -85,11 +91,10 @@ def dohvati_aktivne_kodove():
             ORDER BY vreme_objave DESC
         """)
         redovi = cursor.fetchall()
+        conn.close()
     except Exception as e:
         logging.error(f"Greska pri citanju iz baze: {e}")
         redovi = []
-    finally:
-        conn.close()
     
     rezultat = []
     sada = datetime.now()
@@ -110,8 +115,7 @@ def dohvati_aktivne_kodove():
                     'broj_kopiranja': broj_kopiranja,
                     'preostalo_minuta': preostalo_minuta
                 })
-        except Exception as e:
-            # Ako podatak o vremenu zeza, svejedno ga prikazi
+        except Exception:
             rezultat.append({
                 'kod': kod,
                 'founder': founder,
@@ -160,40 +164,38 @@ async def cmd_aktivno(message: types.Message):
         builder.adjust(1)
         await message.answer(tekst, parse_mode=ParseMode.HTML, reply_markup=builder.as_markup())
     except Exception as e:
-        # Ako bilo sta pukne, bot ce poslati gresku umesto da cuti
         await message.answer(f"Došlo je do greške u komandi: {e}")
 
-# --- OBRAĐIVANJE TEKSTA / KODOVA ---
+# --- OBRAĐIVANJE PORUKA ---
 
 @dp.message(F.text)
 async def obradi_poruku(message: types.Message):
     if message.text.startswith("/"):
         return
 
-    korisnik = message.from_user
-    username = f"@{korisnik.username}" if korisnik.username else korisnik.first_name
-    user_id = korisnik.id
+    try:
+        korisnik = message.from_user
+        username = f"@{korisnik.username}" if korisnik.username else korisnik.first_name
+        user_id = korisnik.id
 
-    pronadjeni_kodovi = re.findall(KOD_REGEX, message.text)
-    if not pronadjeni_kodovi:
-        return
+        pronadjeni_kodovi = re.findall(KOD_REGEX, message.text)
+        if not pronadjeni_kodovi:
+            return
 
-    for kod in pronadjeni_kodovi:
-        kod_velika = kod.upper()
-        prikaz_imena = username
-        uspesno = dodaj_kod(kod_velika, prikaz_imena, user_id)
-        
-        if uspesno:
-            tekst_poruke = (
-                f"🚨 <b>NOVI KOD OD OSNIVAČA:</b> {prikaz_imena}\n\n"
-                f"Pridruži se PERIA grupi za rudarenje!\n"
-                f"Otvori <b>MiningPeria → Mining → Custom</b>\n\n"
-                f"👉 <i>Kliknite na dugme ispod da preuzmete kod!</i>\n\n"
-                f"📊 Popunjeno: <b>1/30</b>\n"
-                f"⏱ Važi još: <b>60 min</b>"
-            )
+        for kod in pronadjeni_kodovi:
+            kod_velika = kod.upper()
+            uspesno, status = dodaj_kod(kod_velika, username, user_id)
             
-            try:
+            if uspesno:
+                tekst_poruke = (
+                    f"🚨 <b>NOVI KOD OD OSNIVAČA:</b> {username}\n\n"
+                    f"Pridruži se PERIA grupi za rudarenje!\n"
+                    f"Otvori <b>MiningPeria → Mining → Custom</b>\n\n"
+                    f"👉 <i>Kliknite na dugme ispod da preuzmete kod!</i>\n\n"
+                    f"📊 Popunjeno: <b>1/30</b>\n"
+                    f"⏱ Važi još: <b>60 min</b>"
+                )
+                
                 nova_poruka = await message.answer(
                     tekst_poruke,
                     parse_mode=ParseMode.HTML,
@@ -213,9 +215,13 @@ async def obradi_poruku(message: types.Message):
                     )
                 except Exception:
                     pass
+            elif status == "KOD_POSTOJI":
+                await message.answer(f"⚠️ Kod <b>{kod_velika}</b> je već objavljen ranije!", parse_mode=ParseMode.HTML)
+            else:
+                await message.answer(f"❌ Greška pri upisu u bazu: {status}")
 
-            except Exception as e:
-                logging.error(f"Greska slanja: {e}")
+    except Exception as e:
+        await message.answer(f"❌ Neočekivana greška u botu: {e}")
 
 async def main():
     print("Bot je pokrenut...")
