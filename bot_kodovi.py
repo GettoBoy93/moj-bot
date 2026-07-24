@@ -2,11 +2,13 @@ import re
 import sqlite3
 import logging
 import os
+import json
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
+from aiogram.types import WebAppInfo
 import asyncio
 
 # --- PODEŠAVANJA ---
@@ -15,7 +17,7 @@ BOT_TOKEN = "8864145955:AAFNAQcoCFUxgPF6AxaExPQ1oos2VOVgZ8Y"
 FOUNDERI_USERNAMES = [
     "@PERIABOY", "@Goran1974m", "@Bahro67", "@Stuxnet992", "@Josip0107",
     "@Snave31", "@jagodica113", "@evanescence83", "@rajder987", "@AleksandarVujic",
-    "@Alessandro1973Vuk"
+    "@Alessandro1973Vuk", "@Djenedjenee"
 ]
 FOUNDERI_IDS = []
 
@@ -85,7 +87,6 @@ def zabelezi_preuzimanje(kod, user_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Provera vremenskog isteka (60 min)
     cursor.execute("SELECT vreme_objave, broj_kopiranja, aktivan FROM kodovi WHERE kod = ?", (kod,))
     row = cursor.fetchone()
     if not row:
@@ -129,6 +130,23 @@ def zabelezi_preuzimanje(kod, user_id):
         conn.close()
         return False, 1, "GRESKA"
 
+def dohvati_kod_info(kod):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT founder, broj_kopiranja, vreme_objave, aktivan FROM kodovi WHERE kod = ?", (kod,))
+    res = cursor.fetchone()
+    conn.close()
+    if res:
+        founder, broj, vreme, aktivan = res
+        if isinstance(vreme, str):
+            vreme_dt = datetime.fromisoformat(vreme)
+        else:
+            vreme_dt = vreme
+        proteklo = int((datetime.now() - vreme_dt).total_seconds() // 60)
+        preostalo = max(0, 60 - proteklo)
+        return founder, broj, preostalo, aktivan
+    return None, 1, 0, 0
+
 def dohvati_aktivne_kodove():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -161,28 +179,13 @@ def dohvati_aktivne_kodove():
         })
     return rezultat
 
-def dohvati_kod_info(kod):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT founder, broj_kopiranja, vreme_objave, aktivan FROM kodovi WHERE kod = ?", (kod,))
-    res = cursor.fetchone()
-    conn.close()
-    if res:
-        founder, broj, vreme, aktivan = res
-        if isinstance(vreme, str):
-            vreme_dt = datetime.fromisoformat(vreme)
-        else:
-            vreme_dt = vreme
-        proteklo = int((datetime.now() - vreme_dt).total_seconds() // 60)
-        preostalo = max(0, 60 - proteklo)
-        return founder, broj, preostalo, aktivan
-    return None, 1, 0, 0
-
 def napravi_tastaturu_za_kod(kod, broj_kopiranja=1):
     builder = InlineKeyboardBuilder()
+    # Povezivanje na WebApp interfejs za prikaz i lak kopir koda
+    webapp_url = f"https://miningperia.com/pages/join.php?custom={kod}"
     builder.button(
         text=f"🎁 Preuzmi kod ({broj_kopiranja}/30)",
-        callback_data=f"preuzmi_{kod}"
+        web_app=WebAppInfo(url=webapp_url)
     )
     return builder.as_markup()
 
@@ -199,7 +202,7 @@ async def cmd_aktivno(message: types.Message):
         await message.answer("Trenutno nema aktivnih kodova.")
         return
     
-    tekst = "<b>🔥 AKTIVNI KODOVI:</b>\n<i>(Kliknite na dugme ispod koda da ga preuzmete i otkrijete)</i>\n\n"
+    tekst = "<b>🔥 AKTIVNI KODOVI:</b>\n\n"
     builder = InlineKeyboardBuilder()
     
     for item in aktivni:
@@ -208,14 +211,14 @@ async def cmd_aktivno(message: types.Message):
             f"   ⏱ Preostalo: <b>{item['preostalo_minuta']} min</b> | 📊 Popunjeno: <b>{item['broj_kopiranja']}/30</b>\n\n"
         )
         builder.button(
-            text=f"🎁 Preuzmi kod od {item['founder']} ({item['broj_kopiranja']}/30)",
-            callback_data=f"preuzmi_{item['kod']}"
+            text=f"🎁 Preuzmi kod ({item['founder']}) ({item['broj_kopiranja']}/30)",
+            web_app=WebAppInfo(url=f"https://miningperia.com/pages/join.php?custom={item['kod']}")
         )
     
     builder.adjust(1)
     await message.answer(tekst, parse_mode=ParseMode.HTML, reply_markup=builder.as_markup())
 
-# --- HANDLER ZA DETEKCIJU KODOVA (POŠILJALAC: FOUNDER) ---
+# --- HANDLER ZA OBJAVU KODA OD OSNIVAČA ---
 
 @dp.message(F.text)
 async def obradi_poruku(message: types.Message):
@@ -241,12 +244,11 @@ async def obradi_poruku(message: types.Message):
             except Exception:
                 pass
             
-            # Poruka na početku NE prikazuje kod – kod je skriven dok se ne klikne dugme
             tekst_poruke = (
                 f"🚨 <b>NOVI KOD OD OSNIVAČA:</b> {prikaz_imena}\n\n"
                 f"Pridruži se PERIA grupi za rudarenje!\n"
                 f"Otvori <b>MiningPeria → Mining → Custom</b>\n\n"
-                f"👉 <i>Kliknite na dugme ispod da preuzmete i otkrijete kod!</i>\n\n"
+                f"👉 <i>Kliknite na dugme ispod da preuzmete kod!</i>\n\n"
                 f"📊 Popunjeno: <b>1/30</b>\n"
                 f"⏱ Važi još: <b>60 min</b>"
             )
@@ -266,56 +268,35 @@ async def obradi_poruku(message: types.Message):
             except Exception as e:
                 logging.error(f"Neuspešno pinovanje: {e}")
 
-# --- HANDLER ZA KLIK NA DUGME "PREUZMI KOD" ---
+# --- HANDLER ZA SINKRONIZACIJU IZ WEBAPP-A ---
 
-@dp.callback_query(F.data.startswith("preuzmi_"))
-async def obradi_preuzimanje(callback_query: types.CallbackQuery):
-    kod = callback_query.data.split("_")[1]
-    user_id = callback_query.from_user.id
-    
-    uspesno, novi_broj, status = zabelezi_preuzimanje(kod, user_id)
-    founder, trenutni_broj, preostalo, aktivan = dohvati_kod_info(kod)
-    
-    if status == "ISTEKAO_TAJMER":
-        await callback_query.answer("❌ Vreme za ovaj kod od 60 minuta je isteklo!", show_alert=True)
-        return
-    elif status == "ISTEKAO_LIMIT":
-        await callback_query.answer(f"❌ Kod {kod} je već dostigao maksimalnih 30 preuzimanja!", show_alert=True)
-        return
-
-    # Tekst poruke koji otkriva kod u mono formatu
-    tekst_sa_kodom = (
-        f"🚨 <b>KOD OD OSNIVAČA:</b> {founder}\n\n"
-        f"Pridruži se PERIA grupi za rudarenje!\n"
-        f"Otvori <b>MiningPeria → Mining → Custom</b> i unesi kod:\n\n"
-        f"👉 <code>{kod}</code> 👈\n"
-        f"<i>(Dodirnite kod iznad da ga kopirate)</i>\n\n"
-        f"📊 Popunjeno: <b>{novi_broj}/30</b>\n"
-        f"⏱ Važi još: <b>{preostalo} min</b>"
-    )
-
-    if status == "VEĆ_PREUZETO":
-        # Prikazujemo iskačuću poruku (alert) sa kodom koji može pročitati
-        await callback_query.answer(
-            f"⚠️ Već ste preuzeli ovaj kod!\n\nVaš kod je: {kod}\n(Dodirnite kod u osveženoj poruci da ga kopirate)",
-            show_alert=True
-        )
-    elif uspesno:
-        # Prikazujemo iskačuću poruku sa kodom odmah na klik
-        await callback_query.answer(
-            f"✅ USPEŠNO PREUZETO!\n\nVaš kod: {kod}\n\nDodirnite kod u poruci da ga kopirate!",
-            show_alert=True
-        )
-
-    # Osvežavamo dugme i poruku u grupi tako da kod postane vidljiv svima u monospace formatu
+@dp.message(F.web_app_data)
+async def obradi_web_app_podatke(message: types.Message):
     try:
-        await callback_query.message.edit_text(
-            tekst_sa_kodom,
-            parse_mode=ParseMode.HTML,
-            reply_markup=napravi_tastaturu_za_kod(kod, novi_broj)
-        )
-    except Exception:
-        pass
+        data = json.loads(message.web_app_data.data)
+        kod = data.get("kod")
+        user_id = message.from_user.id
+        
+        if kod:
+            uspesno, novi_broj, status = zabelezi_preuzimanje(kod, user_id)
+            founder, trenutni_broj, preostalo, aktivan = dohvati_kod_info(kod)
+            
+            tekst_grupa = (
+                f"🚨 <b>NOVI KOD OD OSNIVAČA:</b> {founder}\n\n"
+                f"Pridruži se PERIA grupi za rudarenje!\n"
+                f"Otvori <b>MiningPeria → Mining → Custom</b>\n\n"
+                f"👉 <i>Kliknite na dugme ispod da preuzmete kod!</i>\n\n"
+                f"📊 Popunjeno: <b>{novi_broj}/30</b>\n"
+                f"⏱ Važi još: <b>{preostalo} min</b>"
+            )
+            
+            await message.answer(
+                tekst_grupa,
+                parse_mode=ParseMode.HTML,
+                reply_markup=napravi_tastaturu_za_kod(kod, novi_broj)
+            )
+    except Exception as e:
+        logging.error(f"Greška pri obradi WebApp podataka: {e}")
 
 async def main():
     print("Bot je pokrenut...")
