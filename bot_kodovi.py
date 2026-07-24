@@ -21,7 +21,8 @@ FOUNDERI_USERNAMES = [
 ]
 FOUNDERI_IDS = []
 
-KOD_REGEX = r'\b[A-Z0-9]{6}\b'
+# Detekcija koda (6 karaktera - slova i brojevi)
+KOD_REGEX = r'\b[A-Za-z0-9]{6}\b'
 
 DATA_DIR = "/app/data"
 if os.path.exists(DATA_DIR):
@@ -243,8 +244,9 @@ async def obradi_poruku(message: types.Message):
         return
 
     for kod in pronadjeni_kodovi:
+        kod_velika = kod.upper()
         prikaz_imena = username if username else korisnik.first_name
-        uspesno = dodaj_kod(kod, prikaz_imena, user_id)
+        uspesno = dodaj_kod(kod_velika, prikaz_imena, user_id)
         
         if uspesno:
             tekst_poruke = (
@@ -257,20 +259,17 @@ async def obradi_poruku(message: types.Message):
             )
             
             try:
-                # 1. Prvo šalje novu poruku
                 nova_poruka = await message.answer(
                     tekst_poruke,
                     parse_mode=ParseMode.HTML,
-                    reply_markup=napravi_tastaturu_za_kod(kod, 1)
+                    reply_markup=napravi_tastaturu_za_kod(kod_velika, 1)
                 )
                 
-                # 2. Briše originalnu poruku osnivača
                 try:
                     await message.delete()
                 except Exception as e:
                     logging.error(f"Neuspešno brisanje: {e}")
 
-                # 3. Pinujemo novu poruku
                 try:
                     await bot.pin_chat_message(
                         chat_id=message.chat.id,
