@@ -11,7 +11,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import WebAppInfo
 import asyncio
 
-# Logging za praćenje grešaka
+# Logging za praćenje
 logging.basicConfig(level=logging.INFO)
 
 # --- PODEŠAVANJA ---
@@ -161,7 +161,7 @@ async def cmd_aktivno(message: types.Message):
     builder.adjust(1)
     await message.answer(tekst, parse_mode=ParseMode.HTML, reply_markup=builder.as_markup())
 
-# --- HANDLER ZA OBJAVU KODA OD OSNIVAČA ---
+# --- HANDLER ZA OBJAVU KODA ---
 
 @dp.message(F.text)
 async def obradi_poruku(message: types.Message):
@@ -169,14 +169,8 @@ async def obradi_poruku(message: types.Message):
         return
 
     korisnik = message.from_user
-    username = f"@{korisnik.username}" if korisnik.username else ""
+    username = f"@{korisnik.username}" if korisnik.username else korisnik.first_name
     user_id = korisnik.id
-    
-    founder_list_lower = [u.lower() for u in FOUNDERI_USERNAMES]
-    is_founder = (username.lower() in founder_list_lower) or (user_id in FOUNDERI_IDS)
-    
-    if not is_founder:
-        return
 
     pronadjeni_kodovi = re.findall(KOD_REGEX, message.text)
     if not pronadjeni_kodovi:
@@ -184,7 +178,7 @@ async def obradi_poruku(message: types.Message):
 
     for kod in pronadjeni_kodovi:
         kod_velika = kod.upper()
-        prikaz_imena = username if username else korisnik.first_name
+        prikaz_imena = username
         uspesno = dodaj_kod(kod_velika, prikaz_imena, user_id)
         
         if uspesno:
@@ -197,7 +191,6 @@ async def obradi_poruku(message: types.Message):
                 f"⏱ Važi još: <b>60 min</b>"
             )
             
-            # Najsigurnije slanje bez mogućnosti blokade
             try:
                 nova_poruka = await message.answer(
                     tekst_poruke,
