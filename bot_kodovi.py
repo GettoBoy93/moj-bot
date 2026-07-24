@@ -239,11 +239,6 @@ async def obradi_poruku(message: types.Message):
         uspesno = dodaj_kod(kod, prikaz_imena, user_id)
         
         if uspesno:
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            
             tekst_poruke = (
                 f"🚨 <b>NOVI KOD OD OSNIVAČA:</b> {prikaz_imena}\n\n"
                 f"Pridruži se PERIA grupi za rudarenje!\n"
@@ -253,20 +248,33 @@ async def obradi_poruku(message: types.Message):
                 f"⏱ Važi još: <b>60 min</b>"
             )
             
-            nova_poruka = await message.answer(
-                tekst_poruke,
-                parse_mode=ParseMode.HTML,
-                reply_markup=napravi_tastaturu_za_kod(kod, 1)
-            )
-            
             try:
-                await bot.pin_chat_message(
-                    chat_id=message.chat.id,
-                    message_id=nova_poruka.message_id,
-                    disable_notification=False
+                # 1. Prvo šaljemo novu poruku
+                nova_poruka = await message.answer(
+                    tekst_poruke,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=napravi_tastaturu_za_kod(kod, 1)
                 )
+                
+                # 2. Tek ako je nova poruka uspešno poslata, brišemo staru
+                try:
+                    await message.delete()
+                except Exception as e:
+                    logging.error(f"Neuspešno brisanje originalne poruke: {e}")
+
+                # 3. Pinujemo novu poruku
+                try:
+                    await bot.pin_chat_message(
+                        chat_id=message.chat.id,
+                        message_id=nova_poruka.message_id,
+                        disable_notification=False
+                    )
+                except Exception as e:
+                    logging.error(f"Neuspešno pinovanje: {e}")
+
             except Exception as e:
-                logging.error(f"Neuspešno pinovanje: {e}")
+                # Ako slanje nove poruke ne uspe, obavesti u konzoli/logu
+                logging.error(f"Greška pri slanju nove poruke sa kodom: {e}")
 
 # --- HANDLER ZA SINKRONIZACIJU IZ WEBAPP-A ---
 
