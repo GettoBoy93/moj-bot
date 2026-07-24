@@ -95,7 +95,7 @@ def zabelezi_preuzimanje(kod, user_id):
         
     vreme_objave, trenutni_broj, aktivan = row
     if isinstance(vreme_objave, str):
-        vreme_dt = datetime.fromisoformat(vreme_objave)
+        vreme_dt = datetime.fromisoformat(vreme_objave.replace(" ", "T"))
     else:
         vreme_dt = vreme_objave
 
@@ -139,7 +139,7 @@ def dohvati_kod_info(kod):
     if res:
         founder, broj, vreme, aktivan = res
         if isinstance(vreme, str):
-            vreme_dt = datetime.fromisoformat(vreme)
+            vreme_dt = datetime.fromisoformat(vreme.replace(" ", "T"))
         else:
             vreme_dt = vreme
         proteklo = int((datetime.now() - vreme_dt).total_seconds() // 60)
@@ -150,33 +150,37 @@ def dohvati_kod_info(kod):
 def dohvati_aktivne_kodove():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    granica = datetime.now() - timedelta(minutes=60)
     cursor.execute("""
         SELECT kod, founder, broj_kopiranja, vreme_objave 
         FROM kodovi 
-        WHERE aktivan = 1 AND broj_kopiranja < 30 AND vreme_objave >= ?
+        WHERE aktivan = 1 AND broj_kopiranja < 30
         ORDER BY vreme_objave DESC
-    """, (granica,))
+    """)
     redovi = cursor.fetchall()
     conn.close()
     
     rezultat = []
     sada = datetime.now()
     for kod, founder, broj_kopiranja, vreme_objave in redovi:
-        if isinstance(vreme_objave, str):
-            vreme_dt = datetime.fromisoformat(vreme_objave)
-        else:
-            vreme_dt = vreme_objave
-        
-        proteklo_minuta = int((sada - vreme_dt).total_seconds() // 60)
-        preostalo_minuta = max(0, 60 - proteklo_minuta)
-        
-        rezultat.append({
-            'kod': kod,
-            'founder': founder,
-            'broj_kopiranja': broj_kopiranja,
-            'preostalo_minuta': preostalo_minuta
-        })
+        try:
+            if isinstance(vreme_objave, str):
+                vreme_dt = datetime.fromisoformat(vreme_objave.replace(" ", "T"))
+            else:
+                vreme_dt = vreme_objave
+            
+            proteklo_minuta = int((sada - vreme_dt).total_seconds() // 60)
+            preostalo_minuta = max(0, 60 - proteklo_minuta)
+            
+            if preostalo_minuta > 0:
+                rezultat.append({
+                    'kod': kod,
+                    'founder': founder,
+                    'broj_kopiranja': broj_kopiranja,
+                    'preostalo_minuta': preostalo_minuta
+                })
+        except Exception:
+            continue
+            
     return rezultat
 
 def napravi_tastaturu_za_kod(kod, broj_kopiranja=1):
@@ -217,11 +221,10 @@ async def cmd_aktivno(message: types.Message):
     builder.adjust(1)
     await message.answer(tekst, parse_mode=ParseMode.HTML, reply_markup=builder.as_markup())
 
-# --- HANDLER ZA DETEKCIJU KODOVA OD OSNIVAČA ---
+# --- HANDLER ZA OBJAVU KODA OD OSNIVAČA ---
 
 @dp.message(F.text)
 async def obradi_poruku(message: types.Message):
-    # Ignoši komande da ne upadaju u detekciju kodova
     if message.text.startswith("/"):
         return
 
@@ -229,7 +232,9 @@ async def obradi_poruku(message: types.Message):
     username = f"@{korisnik.username}" if korisnik.username else ""
     user_id = korisnik.id
     
-    is_founder = (username.lower() in [u.lower() for u in FOUNDERI_USERNAMES]) or (user_id in FOUNDERI_IDS)
+    founder_list_lower = [u.lower() for u in FOUNDERI_USERNAMES]
+    is_founder = (username.lower() in founder_list_lower) or (user_id in FOUNDERI_IDS)
+    
     if not is_founder:
         return
 
@@ -252,20 +257,20 @@ async def obradi_poruku(message: types.Message):
             )
             
             try:
-                # 1. Prvo pošalji novu poruku
+                # 1. Prvo šalje novu poruku
                 nova_poruka = await message.answer(
                     tekst_poruke,
                     parse_mode=ParseMode.HTML,
                     reply_markup=napravi_tastaturu_za_kod(kod, 1)
                 )
                 
-                # 2. Tek ako je poslata, obriši staru
+                # 2. Briše originalnu poruku osnivača
                 try:
                     await message.delete()
                 except Exception as e:
-                    logging.error(f"Neuspešno brisanje originalne poruke: {e}")
+                    logging.error(f"Neuspešno brisanje: {e}")
 
-                # 3. Pinuj novu poruku
+                # 3. Pinujemo novu poruku
                 try:
                     await bot.pin_chat_message(
                         chat_id=message.chat.id,
@@ -276,7 +281,7 @@ async def obradi_poruku(message: types.Message):
                     logging.error(f"Neuspešno pinovanje: {e}")
 
             except Exception as e:
-                logging.error(f"Greška pri slanju nove poruke sa kodom: {e}")
+                logging.error(f"Greška pri slanju poruke sa kodom: {e}")
 
 # --- HANDLER ZA SINKRONIZACIJU IZ WEBAPP-A ---
 
