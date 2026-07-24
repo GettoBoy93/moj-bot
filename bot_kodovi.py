@@ -7,7 +7,6 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
-from aiogram.types import WebAppInfo
 import asyncio
 
 logging.basicConfig(level=logging.INFO)
@@ -127,10 +126,10 @@ def dohvati_aktivne_kodove():
 
 def napravi_tastaturu_za_kod(kod, broj_kopiranja=1):
     builder = InlineKeyboardBuilder()
-    webapp_url = f"https://miningperia.com/pages/join.php?custom={kod}"
+    link_url = f"https://miningperia.com/pages/join.php?custom={kod}"
     builder.button(
         text=f"🎁 Preuzmi kod ({broj_kopiranja}/30)",
-        web_app=WebAppInfo(url=webapp_url)
+        url=link_url
     )
     return builder.as_markup()
 
@@ -158,7 +157,7 @@ async def cmd_aktivno(message: types.Message):
             )
             builder.button(
                 text=f"🎁 Preuzmi kod ({item['founder']}) ({item['broj_kopiranja']}/30)",
-                web_app=WebAppInfo(url=f"https://miningperia.com/pages/join.php?custom={item['kod']}")
+                url=f"https://miningperia.com/pages/join.php?custom={item['kod']}"
             )
         
         builder.adjust(1)
