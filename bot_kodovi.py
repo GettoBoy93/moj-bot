@@ -2,8 +2,7 @@ import re
 import sqlite3
 import logging
 import os
-import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -11,20 +10,9 @@ from aiogram.enums import ParseMode
 from aiogram.types import WebAppInfo
 import asyncio
 
-# Logging za praćenje
 logging.basicConfig(level=logging.INFO)
 
-# --- PODEŠAVANJA ---
 BOT_TOKEN = "8864145955:AAFNAQcoCFUxgPF6AxaExPQ1oos2VOVgZ8Y"
-
-FOUNDERI_USERNAMES = [
-    "@PERIABOY", "@Goran1974m", "@Bahro67", "@Stuxnet992", "@Josip0107",
-    "@Snave31", "@jagodica113", "@evanescence83", "@rajder987", "@AleksandarVujic",
-    "@Alessandro1973Vuk", "@Djenedjenee"
-]
-FOUNDERI_IDS = []
-
-# Detekcija koda (bilo kojih 6 karaktera slova/brojeva)
 KOD_REGEX = r'\b[A-Za-z0-9]{6}\b'
 
 DATA_DIR = "/app/data"
@@ -36,7 +24,6 @@ else:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- BAZA PODATAKA ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -90,14 +77,19 @@ def dodaj_kod(kod, founder_name, founder_user_id):
 def dohvati_aktivne_kodove():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT kod, founder, broj_kopiranja, vreme_objave 
-        FROM kodovi 
-        WHERE aktivan = 1 AND broj_kopiranja < 30
-        ORDER BY vreme_objave DESC
-    """)
-    redovi = cursor.fetchall()
-    conn.close()
+    try:
+        cursor.execute("""
+            SELECT kod, founder, broj_kopiranja, vreme_objave 
+            FROM kodovi 
+            WHERE aktivan = 1 AND broj_kopiranja < 30
+            ORDER BY vreme_objave DESC
+        """)
+        redovi = cursor.fetchall()
+    except Exception as e:
+        logging.error(f"Greska pri citanju iz baze: {e}")
+        redovi = []
+    finally:
+        conn.close()
     
     rezultat = []
     sada = datetime.now()
@@ -118,8 +110,14 @@ def dohvati_aktivne_kodove():
                     'broj_kopiranja': broj_kopiranja,
                     'preostalo_minuta': preostalo_minuta
                 })
-        except Exception:
-            continue
+        except Exception as e:
+            # Ako podatak o vremenu zeza, svejedno ga prikazi
+            rezultat.append({
+                'kod': kod,
+                'founder': founder,
+                'broj_kopiranja': broj_kopiranja,
+                'preostalo_minuta': 60
+            })
             
     return rezultat
 
@@ -132,7 +130,7 @@ def napravi_tastaturu_za_kod(kod, broj_kopiranja=1):
     )
     return builder.as_markup()
 
-# --- HANDLERI ZA KOMANDE ---
+# --- KOMANDE ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -140,28 +138,32 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command("aktivno"))
 async def cmd_aktivno(message: types.Message):
-    aktivni = dohvati_aktivne_kodove()
-    if not aktivni:
-        await message.answer("Trenutno nema aktivnih kodova.")
-        return
-    
-    tekst = "<b>🔥 AKTIVNI KODOVI:</b>\n\n"
-    builder = InlineKeyboardBuilder()
-    
-    for item in aktivni:
-        tekst += (
-            f"• Osnivač: <b>{item['founder']}</b>\n"
-            f"   ⏱ Preostalo: <b>{item['preostalo_minuta']} min</b> | 📊 Popunjeno: <b>{item['broj_kopiranja']}/30</b>\n\n"
-        )
-        builder.button(
-            text=f"🎁 Preuzmi kod ({item['founder']}) ({item['broj_kopiranja']}/30)",
-            web_app=WebAppInfo(url=f"https://miningperia.com/pages/join.php?custom={item['kod']}")
-        )
-    
-    builder.adjust(1)
-    await message.answer(tekst, parse_mode=ParseMode.HTML, reply_markup=builder.as_markup())
+    try:
+        aktivni = dohvati_aktivne_kodove()
+        if not aktivni:
+            await message.answer("Trenutno nema aktivnih kodova.")
+            return
+        
+        tekst = "<b>🔥 AKTIVNI KODOVI:</b>\n\n"
+        builder = InlineKeyboardBuilder()
+        
+        for item in aktivni:
+            tekst += (
+                f"• Osnivač: <b>{item['founder']}</b>\n"
+                f"   ⏱ Preostalo: <b>{item['preostalo_minuta']} min</b> | 📊 Popunjeno: <b>{item['broj_kopiranja']}/30</b>\n\n"
+            )
+            builder.button(
+                text=f"🎁 Preuzmi kod ({item['founder']}) ({item['broj_kopiranja']}/30)",
+                web_app=WebAppInfo(url=f"https://miningperia.com/pages/join.php?custom={item['kod']}")
+            )
+        
+        builder.adjust(1)
+        await message.answer(tekst, parse_mode=ParseMode.HTML, reply_markup=builder.as_markup())
+    except Exception as e:
+        # Ako bilo sta pukne, bot ce poslati gresku umesto da cuti
+        await message.answer(f"Došlo je do greške u komandi: {e}")
 
-# --- HANDLER ZA OBJAVU KODA ---
+# --- OBRAĐIVANJE TEKSTA / KODOVA ---
 
 @dp.message(F.text)
 async def obradi_poruku(message: types.Message):
@@ -200,8 +202,8 @@ async def obradi_poruku(message: types.Message):
                 
                 try:
                     await message.delete()
-                except Exception as e:
-                    logging.error(f"Neuspešno brisanje: {e}")
+                except Exception:
+                    pass
 
                 try:
                     await bot.pin_chat_message(
@@ -209,11 +211,11 @@ async def obradi_poruku(message: types.Message):
                         message_id=nova_poruka.message_id,
                         disable_notification=False
                     )
-                except Exception as e:
-                    logging.error(f"Neuspešno pinovanje: {e}")
+                except Exception:
+                    pass
 
             except Exception as e:
-                logging.error(f"Greška pri slanju nove poruke: {e}")
+                logging.error(f"Greska slanja: {e}")
 
 async def main():
     print("Bot je pokrenut...")
