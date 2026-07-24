@@ -13,7 +13,7 @@ BOT_TOKEN = "8864145955:AAFNAQcoCFUxgPF6AxaExPQ1oos2VOVgZ8Y"
 
 FOUNDERI_USERNAMES = [
     "@PERIABOY", "@Goran1974m", "@Bahro67", "@Stuxnet992", "@Josip0107",
-    "@Snave31", "@jagodica113", "@evanescence83", "@rajder987", "@AleksandarVujic"
+    "@Snave31", "@jagodica113", "@evanescence83", "@rajder987", "@AleksandarVujic", "@Alessandro1973Vuk"
 ]
 FOUNDERI_IDS = []
 
