@@ -17,9 +17,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Baza aktivnih kodova
 ACTIVE_CODES = {}
 
-# SVIH 11 OSNIVAČA
+# KOMPLETNA LISTA OD 11 OSNIVAČA
 FOUNDERS = [
     "@PERIABOY",
     "@jagodica113",
@@ -35,18 +36,17 @@ FOUNDERS = [
 ]
 
 def check_is_founder(user) -> bool:
-    """Proverava da li je korisnik osnivač (poređenje ignorisanem velikih/malih slova)."""
     if not user:
         return False
         
-    # Provera po ID-ju (ako pošalješ svoj ID u budućnosti)
+    # Provera po ID-ju ako se u listu ubace brojevi
     if user.id in FOUNDERS:
         return True
 
-    # Provera po username-u
+    # Provera po username-u (nebitno velika ili mala slova)
     if user.username:
         user_uname = f"@{user.username}".lower()
-        founders_lower = [f.lower() for f in FOUNDERS if isinstance(f, str)]
+        founders_lower = [str(f).lower() for f in FOUNDERS]
         if user_uname in founders_lower:
             return True
 
@@ -57,8 +57,6 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
     if not check_is_founder(user):
-        # Ako iz nekog razloga ne prepozna osnivača, odštampaće u konzoli tačan ID/username radi lakše provere
-        logger.warning(f"Korisnik {user.id} (@{user.username}) nije prepoznat kao founder.")
         await update.message.reply_text("❌ Ova komanda je rezervisana samo za osnivače.")
         return
 
@@ -93,7 +91,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(parts) > 1:
                 code = parts[1].strip()
 
-        # Provera formata: 6 karaktera, slova i/ili brojevi
+        # Uslov: Tačno 6 slova/brojeva (obavezno bar jedno slovo A-Z)
         is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code))
 
         if is_valid_format:
@@ -190,7 +188,10 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def main():
-    BOT_TOKEN = os.getenv("BOT_TOKEN", "TVOJ_TELEGRAM_BOT_TOKEN")
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    if not BOT_TOKEN:
+        logger.error("BOT_TOKEN nije postavljen u Railway Variables!")
+        return
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -198,7 +199,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_button_click))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
-    logger.info("Bot pokrenut...")
+    logger.info("Bot je uspešno pokrenut na Railway-u!")
     app.run_polling()
 
 if __name__ == "__main__":
