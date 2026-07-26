@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -16,81 +17,88 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------
-# PODEŠAVANJA I BAZA U MEMORIJI
-# ---------------------------------------------------------
+# Baza aktivnih kodova u memoriji
+ACTIVE_CODES = {}
 
-# Lista Telegram ID-jeva osnivača
-FOUNDER_IDS = [123456789]  # Zameni sa pravim Telegram ID-jevima
+# TAČNA I KOMPLETNA LISTA OSNIVAČA (11 članova)
+FOUNDERS = [
+    "@PERIABOY",
+    "@jagodica113",
+    "@Alessandro1973Vuk",
+    "@Djenedjenee",
+    "@Goran1974m",
+    "@Bahro67",
+    "@Stuxnet992",
+    "@Josip0107",
+    "@Snave31",
+    "@evanescence83",
+    "@rajder987"
+]
 
-ACTIVE_CODES = {} 
-
-# ---------------------------------------------------------
-# HANDLER ZA FOUNDER-E (OBJAVA KODA)
-# ---------------------------------------------------------
-
-async def handle_founder_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Kada Founder pošalje kod, bot briše njegovu poruku, 
-    odmah uračunava Founder-a kao prvog korisnika (1/30)
-    i objavljuje novu poruku sa dugmetom.
-    """
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    founder_id = update.effective_user.id
-    text = update.message.text.strip().upper()
+    text = update.message.text.strip()
+    user = update.effective_user
+    username = f"@{user.username}" if user.username else ""
 
-    # Proverava da li je pošiljalac Founder
-    if founder_id in FOUNDER_IDS:
-        code = text
-        max_limit = 30
+    # Provera da li je pošiljalac osnivač (preko username-a ili ID-ja)
+    is_founder = (username in FOUNDERS) or (user.id in FOUNDERS)
+
+    if is_founder:
+        code = text.upper()
         
-        # 1. Registrujemo kod i ODMAH dodajemo Founder-a u claimed_users (startuje od 1/30)
-        ACTIVE_CODES[code] = {
-            "max_uses": max_limit,
-            "current_uses": 1,  # Startuje od 1 jer si ti prvi!
-            "claimed_users": {founder_id},  # Founder se automatski upisuje
-            "reward": 100
-        }
+        # Ako je poslat preko komande /kod ABCDEF ili /kod GH7M5C
+        if code.startswith("/KOD "):
+            parts = code.split(maxsplit=1)
+            if len(parts) > 1:
+                code = parts[1].strip()
 
-        # Ovde po potrebi dodaješ nagradu i Founder-u u bazi:
-        # add_user_points(founder_id, 100)
+        # PRAVILO: Tačno 6 karaktera, mora sadržati bar jedno velika slovo (A-Z) 
+        # i može sadržati brojeve (0-9). Samo čisti brojevi (npr. 123456) NE PROLAZE.
+        # Prolaze: GH7M5C, ABCDEF, A1B2C3
+        is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code))
 
-        # 2. Brišemo originalnu Founder poruku
-        try:
-            await update.message.delete()
-        except Exception as e:
-            logger.warning(f"Nije moguće obrisati poruku: {e}")
+        if is_valid_format:
+            max_uses = 30
+            
+            # Kod startuje od 1/30 (Osnivač koji je objavio je prvi)
+            ACTIVE_CODES[code] = {
+                "max_uses": max_uses,
+                "current_uses": 1,
+                "claimed_users": {user.id},
+                "reward": 100
+            }
 
-        # 3. Pravimo dugme za preuzimanje
-        keyboard = [
-            [InlineKeyboardButton(f"🎁 Preuzmi kod {code}", callback_data=f"claim_{code}")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            # Brišemo poruku osnivača
+            try:
+                await update.message.delete()
+            except Exception as e:
+                logger.warning(f"Nije moguće obrisati poruku: {e}")
 
-        # 4. Bot šalje zvaničnu objavu sa početnim stanjem 1/30
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=(
-                f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
-                f"Kod: `{code}`\n"
-                f"Iskorišćeno: **1/{max_limit}**\n\n"
-                f"Kliknite na dugme ispod da preuzmete nagradu!"
-            ),
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
-        )
+            # Generišemo dugme za preuzimanje
+            keyboard = [
+                [InlineKeyboardButton(f"🎁 Preuzmi kod {code}", callback_data=f"claim_{code}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
-# ---------------------------------------------------------
-# HANDLER ZA KLIK NA DUGME
-# ---------------------------------------------------------
+            # Šaljemo zvaničnu objavu sa stanjem 1/30
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=(
+                    f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
+                    f"Kod: `{code}`\n"
+                    f"Iskorišćeno: **1/{max_uses}**\n\n"
+                    f"Kliknite na dugme ispod da preuzmete nagradu!"
+                ),
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+            return
+
 
 async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Obrađuje klik na dugme 'Preuzmi kod'.
-    Povećava brojač za sledeće korisnike i sprečava duplo preuzimanje.
-    """
     query = update.callback_query
     await query.answer()
 
@@ -106,7 +114,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         code_data = ACTIVE_CODES[code]
 
-        # 1. Provera da li je korisnik (ili Founder) već u listi
+        # 1. Provera jednokratnog preuzimanja po korisniku
         if user_id in code_data["claimed_users"]:
             await query.message.reply_text(
                 "⚠️ Već ste preuzeli ovaj promo kod! Svaki korisnik može iskoristiti kod samo jednom.",
@@ -114,27 +122,24 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             return
 
-        # 2. Provera da li je popunjen maksimalan broj mesta (30/30)
+        # 2. Provera popunjenosti svih 30 mesta
         if code_data["current_uses"] >= code_data["max_uses"]:
             await query.message.reply_text("❌ Sva mesta za ovaj kod su popunjena!", quote=True)
             return
 
-        # 3. Uspelo preuzimanje: Registrujemo novog korisnika i povećavamo brojač
+        # 3. Dodajemo korisnika u listu i povećavamo brojač
         code_data["claimed_users"].add(user_id)
         code_data["current_uses"] += 1
 
         current = code_data["current_uses"]
         max_limit = code_data["max_uses"]
 
-        # Ovde dodaješ nagradu novom korisniku u bazu:
-        # add_user_points(user_id, code_data['reward'])
-
-        # 4. Ažuriramo brojač u poruci u grupi (npr. sa 1/30 na 2/30)
         keyboard = [
             [InlineKeyboardButton(f"🎁 Preuzmi kod {code}", callback_data=f"claim_{code}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
+        # Osvežavamo prikaz brojača u poruci (sa 1/30 na 2/30...)
         try:
             await query.edit_message_text(
                 text=(
@@ -149,16 +154,12 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             pass
 
-        # Šaljemo obaveštenje korisniku
         await query.message.reply_text(
-            f"🎉 Uspešno ste preuzeli kod `{code}`! Dobili ste {code_data['reward']} poena.",
+            f"🎉 Uspešno ste preuzeli kod `{code}`!",
             parse_mode="Markdown",
             quote=True
         )
 
-# ---------------------------------------------------------
-# MAIN
-# ---------------------------------------------------------
 
 def main():
     BOT_TOKEN = os.getenv("BOT_TOKEN", "TVOJ_TELEGRAM_BOT_TOKEN")
@@ -166,9 +167,10 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CallbackQueryHandler(handle_button_click))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_founder_code))
+    # Sluša sve tekstualne poruke (uključujući i komande poput /kod)
+    app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
-    logger.info("Bot pokrenut...")
+    logger.info("Bot je pokrenut...")
     app.run_polling()
 
 if __name__ == "__main__":
