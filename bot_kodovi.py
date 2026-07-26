@@ -17,10 +17,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Baza aktivnih kodova
 ACTIVE_CODES = {}
 
-# KOMPLETNA LISTA OD 11 OSNIVAČA
 FOUNDERS = [
     "@PERIABOY",
     "@jagodica113",
@@ -38,42 +36,50 @@ FOUNDERS = [
 def check_is_founder(user) -> bool:
     if not user:
         return False
-        
-    # Provera po ID-ju ako se u listu ubace brojevi
     if user.id in FOUNDERS:
         return True
-
-    # Provera po username-u (nebitno velika ili mala slova)
     if user.username:
         user_uname = f"@{user.username}".lower()
         founders_lower = [str(f).lower() for f in FOUNDERS]
         if user_uname in founders_lower:
             return True
-
     return False
 
 
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Odgovor na /start komandu."""
+    await update.message.reply_text(
+        "👋 Zdravo! Dobrodošli u MiningPeria promo bot.\n\n"
+        "Upotrebite komandu /aktivno da vidite trenutno dostupne promo kodove i preuzmete nagrade!"
+    )
+
+
 async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-
-    if not check_is_founder(user):
-        await update.message.reply_text("❌ Ova komanda je rezervisana samo za osnivače.")
-        return
-
+    """
+    Komanda /aktivno otvorena za sve korisnike.
+    Sakriva sam kod i prikazuje dugme za preuzimanje ispod svakog stavke.
+    """
     if not ACTIVE_CODES:
         await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
         return
 
     poruka = "📊 **PREGLED AKTIVNIH PROMO KODOVA:**\n\n"
-    for code, data in ACTIVE_CODES.items():
+    keyboard = []
+    
+    for i, (code, data) in enumerate(ACTIVE_CODES.items(), 1):
         poruka += (
-            f"🔹 Kod: `{code}`\n"
+            f"🔹 **Promo Kod #{i}**\n"
             f"   • Iskorišćeno: **{data['current_uses']}/{data['max_uses']}**\n"
-            f"   • Nagrada: {data['reward']} poena\n"
+            f"   • Nagrada: **{data['reward']} poena**\n"
             f"----------------------------------\n"
         )
+        # Generisanje dugmeta za svaki aktivan kod bez otkrivanja teksta koda u poruci
+        keyboard.append([
+            InlineKeyboardButton(f"🎁 Preuzmi Kod #{i}", callback_data=f"claim_{code}")
+        ])
 
-    await update.message.reply_text(poruka, parse_mode="Markdown")
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(poruka, reply_markup=reply_markup, parse_mode="Markdown")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,7 +97,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(parts) > 1:
                 code = parts[1].strip()
 
-        # Uslov: Tačno 6 slova/brojeva (obavezno bar jedno slovo A-Z)
+        # Provera formata: tačno 6 karaktera (velika slova i/ili brojevi sa bar jednim slovom)
         is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code))
 
         if is_valid_format:
@@ -110,7 +116,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"Nije moguće obrisati poruku: {e}")
 
             keyboard = [
-                [InlineKeyboardButton(f"🎁 Preuzmi kod {code}", callback_data=f"claim_{code}")]
+                [InlineKeyboardButton("🎁 Preuzmi Kod", callback_data=f"claim_{code}")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -118,7 +124,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=update.effective_chat.id,
                 text=(
                     f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
-                    f"Kod: `{code}`\n"
                     f"Iskorišćeno: **1/{max_uses}**\n\n"
                     f"Kliknite na dugme ispod da preuzmete nagradu!"
                 ),
@@ -146,7 +151,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if user_id in code_data["claimed_users"]:
             await query.message.reply_text(
-                "⚠️ Već ste preuzeli ovaj promo kod! Svaki korisnik može iskoristiti kod samo jednom.",
+                "⚠️ Već ste preuzeli ovaj promo kod!",
                 quote=True
             )
             return
@@ -161,27 +166,28 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         current = code_data["current_uses"]
         max_limit = code_data["max_uses"]
 
-        keyboard = [
-            [InlineKeyboardButton(f"🎁 Preuzmi kod {code}", callback_data=f"claim_{code}")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        # Ako je objava bila pojedinačna objava
+        if "🔥 **NOVI PROMO KOD!** 🔥" in (query.message.text or ""):
+            keyboard = [
+                [InlineKeyboardButton("🎁 Preuzmi Kod", callback_data=f"claim_{code}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
-        try:
-            await query.edit_message_text(
-                text=(
-                    f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
-                    f"Kod: `{code}`\n"
-                    f"Iskorišćeno: **{current}/{max_limit}**\n\n"
-                    f"Kliknite na dugme ispod da preuzmete nagradu!"
-                ),
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
+            try:
+                await query.edit_message_text(
+                    text=(
+                        f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
+                        f"Iskorišćeno: **{current}/{max_limit}**\n\n"
+                        f"Kliknite na dugme ispod da preuzmete nagradu!"
+                    ),
+                    reply_markup=reply_markup,
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
 
         await query.message.reply_text(
-            f"🎉 Uspešno ste preuzeli kod `{code}`!",
+            "🎉 Uspešno ste preuzeli promo kod!",
             parse_mode="Markdown",
             quote=True
         )
@@ -190,16 +196,18 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 def main():
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN nije postavljen u Railway Variables!")
+        logger.error("BOT_TOKEN nije podešen!")
         return
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Registrovani svi handleri
+    app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("aktivno", aktivno_command))
     app.add_handler(CallbackQueryHandler(handle_button_click))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
-    logger.info("Bot je uspešno pokrenut na Railway-u!")
+    logger.info("Bot uspešno pokrenut...")
     app.run_polling()
 
 if __name__ == "__main__":
