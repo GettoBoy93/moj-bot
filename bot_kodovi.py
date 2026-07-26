@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 ACTIVE_CODES = {}
 
+# SVIH 12 OSNIVAČA + VLASNIK GRUPE
 FOUNDERS = [
     "@PERIABOY",
     "@jagodica113",
@@ -29,7 +30,9 @@ FOUNDERS = [
     "@Josip0107",
     "@Snave31",
     "@evanescence83",
-    "@rajder987"
+    "@rajder987",
+    "@PeroPericaVezo",
+    "@aei123_AI"
 ]
 
 def check_is_founder(user) -> bool:
@@ -54,10 +57,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Komanda /aktivno otvorena za sve korisnike.
-    Prikazuje samo naziv osnivača i dugme sa direktnim URL linkom do sajta.
-    """
+    """Komanda /aktivno otvorena za sve korisnike."""
     if not ACTIVE_CODES:
         await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
         return
@@ -79,6 +79,43 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(poruka, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Komanda /obrisi KOD ili /del KOD za osnivače i vlasnika.
+    Briše željeni kod iz baze aktivnih kodova.
+    """
+    user = update.effective_user
+
+    if not check_is_founder(user):
+        await update.message.reply_text("❌ Ova komanda je rezervisana samo za osnivače i vlasnika.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Primer upotrebe: `/obrisi GH7M6C` ili `/del GH7M6C`", parse_mode="Markdown")
+        return
+
+    code_to_delete = context.args[0].strip().upper()
+
+    try:
+        await update.message.delete()
+    except Exception as e:
+        logger.warning(f"Nije moguće obrisati komandu osnivača: {e}")
+
+    if code_to_delete in ACTIVE_CODES:
+        del ACTIVE_CODES[code_to_delete]
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"✅ Promo kod `{code_to_delete}` je uspešno uklonjen iz aktivnih kodova.",
+            parse_mode="Markdown"
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"❌ Kod `{code_to_delete}` nije pronađen među aktivnim kodovima.",
+            parse_mode="Markdown"
+        )
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -111,7 +148,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"Nije moguće obrisati poruku: {e}")
 
-            # Generisanje direktnog linka
             generated_link = f"https://miningperia.com/pages/join.php?custom={code}"
 
             keyboard = [
@@ -142,6 +178,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("aktivno", aktivno_command))
+    app.add_handler(CommandHandler(["obrisi", "del"], obrisi_command))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
     logger.info("Bot uspešno pokrenut...")
