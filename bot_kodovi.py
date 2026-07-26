@@ -17,7 +17,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Baza aktivnih kodova u memoriji
 ACTIVE_CODES = {}
 
 # SVIH 11 OSNIVAČA
@@ -35,13 +34,31 @@ FOUNDERS = [
     "@rajder987"
 ]
 
-async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Komanda /aktivno za pregled kodova."""
-    user = update.effective_user
-    username = f"@{user.username}" if user.username else ""
-    is_founder = (username in FOUNDERS) or (user.id in FOUNDERS)
+def check_is_founder(user) -> bool:
+    """Proverava da li je korisnik osnivač (poređenje ignorisanem velikih/malih slova)."""
+    if not user:
+        return False
+        
+    # Provera po ID-ju (ako pošalješ svoj ID u budućnosti)
+    if user.id in FOUNDERS:
+        return True
 
-    if not is_founder:
+    # Provera po username-u
+    if user.username:
+        user_uname = f"@{user.username}".lower()
+        founders_lower = [f.lower() for f in FOUNDERS if isinstance(f, str)]
+        if user_uname in founders_lower:
+            return True
+
+    return False
+
+
+async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    if not check_is_founder(user):
+        # Ako iz nekog razloga ne prepozna osnivača, odštampaće u konzoli tačan ID/username radi lakše provere
+        logger.warning(f"Korisnik {user.id} (@{user.username}) nije prepoznat kao founder.")
         await update.message.reply_text("❌ Ova komanda je rezervisana samo za osnivače.")
         return
 
@@ -60,17 +77,15 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(poruka, parse_mode="Markdown")
 
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
     text = update.message.text.strip()
     user = update.effective_user
-    username = f"@{user.username}" if user.username else ""
 
-    is_founder = (username in FOUNDERS) or (user.id in FOUNDERS)
-
-    if is_founder:
+    if check_is_founder(user):
         code = text.upper()
         
         if code.startswith("/KOD "):
@@ -78,13 +93,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(parts) > 1:
                 code = parts[1].strip()
 
-        # Provera: Tačno 6 karaktera, sadrži velika slova ili kombinaciju slova i brojeva
+        # Provera formata: 6 karaktera, slova i/ili brojevi
         is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code))
 
         if is_valid_format:
             max_uses = 30
             
-            # Kod startuje od 1/30
             ACTIVE_CODES[code] = {
                 "max_uses": max_uses,
                 "current_uses": 1,
@@ -114,6 +128,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
             return
+
 
 async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -173,6 +188,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             quote=True
         )
 
+
 def main():
     BOT_TOKEN = os.getenv("BOT_TOKEN", "TVOJ_TELEGRAM_BOT_TOKEN")
 
@@ -182,7 +198,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_button_click))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
-    logger.info("Bot je uspešno pokrenut sa kompletiranom logikom...")
+    logger.info("Bot pokrenut...")
     app.run_polling()
 
 if __name__ == "__main__":
