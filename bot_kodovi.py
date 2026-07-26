@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 ACTIVE_CODES = {}
 
-# SVIH 13 OSNIVAČA + VLASNIK GRUPE
+# UKUPNO 15 OSNIVAČA
 FOUNDERS = [
     "@PERIABOY",
     "@jagodica113",
@@ -33,8 +33,9 @@ FOUNDERS = [
     "@evanescence83",
     "@rajder987",
     "@PeroPericaVezo",
+    "@Iken2014",
     "@aei123_AI",
-    "@Iken2014"
+    "@AleksandarVujic"
 ]
 
 def check_is_founder(user) -> bool:
@@ -110,11 +111,11 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Komanda /obrisi KOD ili /del KOD za osnivače i vlasnika."""
+    """Komanda /obrisi KOD ili /del KOD za osnivače."""
     user = update.effective_user
 
     if not check_is_founder(user):
-        await update.message.reply_text("❌ Ova komanda je rezervisana samo za osnivače i vlasnika.")
+        await update.message.reply_text("❌ Ova komanda je rezervisana samo za osnivače.")
         return
 
     if not context.args:
