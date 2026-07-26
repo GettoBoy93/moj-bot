@@ -67,13 +67,13 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     
     for i, (code, data) in enumerate(ACTIVE_CODES.items(), 1):
+        founder_display = data.get("founder", "Osnivač")
         poruka += (
-            f"🔹 **Promo Kod #{i}**\n"
+            f"🔹 **Promo Kod #{i}** (Founder: {founder_display})\n"
             f"   • Iskorišćeno: **{data['current_uses']}/{data['max_uses']}**\n"
             f"   • Nagrada: **{data['reward']} poena**\n"
             f"----------------------------------\n"
         )
-        # Generisanje dugmeta za svaki aktivan kod bez otkrivanja teksta koda u poruci
         keyboard.append([
             InlineKeyboardButton(f"🎁 Preuzmi Kod #{i}", callback_data=f"claim_{code}")
         ])
@@ -103,11 +103,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_valid_format:
             max_uses = 30
             
+            # Određujemo ime ili username osnivača za prikaz
+            founder_name = f"@{user.username}" if user.username else user.first_name
+
             ACTIVE_CODES[code] = {
                 "max_uses": max_uses,
                 "current_uses": 1,
                 "claimed_users": {user.id},
-                "reward": 100
+                "reward": 100,
+                "founder": founder_name
             }
 
             try:
@@ -120,10 +124,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
+            # Izmenjen tekst: umesto "Kod: XXXXXX" piše "Founder: @username"
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=(
                     f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
+                    f"Founder: **{founder_name}**\n"
                     f"Iskorišćeno: **1/{max_uses}**\n\n"
                     f"Kliknite na dugme ispod da preuzmete nagradu!"
                 ),
@@ -165,8 +171,9 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         current = code_data["current_uses"]
         max_limit = code_data["max_uses"]
+        founder_name = code_data.get("founder", "Osnivač")
 
-        # Ako je objava bila pojedinačna objava
+        # Osvežavanje poruke ako je reč o objavi u grupi
         if "🔥 **NOVI PROMO KOD!** 🔥" in (query.message.text or ""):
             keyboard = [
                 [InlineKeyboardButton("🎁 Preuzmi Kod", callback_data=f"claim_{code}")]
@@ -177,6 +184,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await query.edit_message_text(
                     text=(
                         f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
+                        f"Founder: **{founder_name}**\n"
                         f"Iskorišćeno: **{current}/{max_limit}**\n\n"
                         f"Kliknite na dugme ispod da preuzmete nagradu!"
                     ),
@@ -201,7 +209,6 @@ def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Registrovani svi handleri
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("aktivno", aktivno_command))
     app.add_handler(CallbackQueryHandler(handle_button_click))
