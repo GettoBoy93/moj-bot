@@ -84,7 +84,6 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Komanda /obrisi KOD ili /del KOD za osnivače i vlasnika.
-    Briše željeni kod iz baze aktivnih kodova.
     """
     user = update.effective_user
 
@@ -118,6 +117,14 @@ async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def auto_expire_code(context: ContextTypes.DEFAULT_TYPE):
+    """Automatsko brisanje koda iz memorije nakon 60 minuta (3600 sekundi)."""
+    code = context.job.data
+    if code in ACTIVE_CODES:
+        del ACTIVE_CODES[code]
+        logger.info(f"Kod {code} je automatski istekao i obrisan je posle 60 minuta.")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -142,6 +149,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ACTIVE_CODES[code] = {
                 "founder": founder_name
             }
+
+            # Zakazivanje automatskog brisanja nakon 60 minuta (3600 sekundi)
+            if context.job_queue:
+                context.job_queue.run_once(
+                    auto_expire_code,
+                    when=3600,
+                    data=code,
+                    name=f"expire_{code}"
+                )
 
             try:
                 await update.message.delete()
