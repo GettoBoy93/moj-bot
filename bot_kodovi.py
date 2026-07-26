@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -57,34 +58,58 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Komanda /aktivno otvorena za sve korisnike."""
+    """
+    Komanda /aktivno otvorena za sve korisnike.
+    Prikazuje osnivača, preostale minute do isteka koda i dugme sa linkom.
+    """
     if not ACTIVE_CODES:
         await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
         return
 
+    current_time = time.time()
+    expired_codes = []
     poruka = "📊 **PREGLED AKTIVNIH PROMO KODOVA:**\n\n"
     keyboard = []
-    
-    for i, (code, data) in enumerate(ACTIVE_CODES.items(), 1):
+    index = 1
+
+    for code, data in list(ACTIVE_CODES.items()):
+        elapsed_seconds = current_time - data.get("created_at", current_time)
+        remaining_seconds = 3600 - elapsed_seconds
+
+        # Ako je proslo vise od 60 min, markiraj za brisanje
+        if remaining_seconds <= 0:
+            expired_codes.append(code)
+            continue
+
+        remaining_minutes = int(remaining_seconds // 60)
         founder_display = data.get("founder", "Osnivač")
         generated_link = f"https://miningperia.com/pages/join.php?custom={code}"
-        
+
         poruka += (
-            f"🔹 **Promo Kod #{i}** (Founder: {founder_display})\n"
+            f"🔹 **Promo Kod #{index}** (Founder: {founder_display})\n"
+            f"   • Preostalo: **{remaining_minutes} min**\n"
             f"----------------------------------\n"
         )
         keyboard.append([
-            InlineKeyboardButton(f"🚀 Preuzmi Kod #{i}", url=generated_link)
+            InlineKeyboardButton(f"🚀 Preuzmi Kod #{index}", url=generated_link)
         ])
+        index += 1
+
+    # Obrisati sve kodove koji su u međuvremenu istekli
+    for code in expired_codes:
+        if code in ACTIVE_CODES:
+            del ACTIVE_CODES[code]
+
+    if not keyboard:
+        await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
+        return
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(poruka, reply_markup=reply_markup, parse_mode="Markdown")
 
 
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Komanda /obrisi KOD ili /del KOD za osnivače i vlasnika.
-    """
+    """Komanda /obrisi KOD ili /del KOD za osnivače i vlasnika."""
     user = update.effective_user
 
     if not check_is_founder(user):
@@ -147,7 +172,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             founder_name = f"@{user.username}" if user.username else user.first_name
 
             ACTIVE_CODES[code] = {
-                "founder": founder_name
+                "founder": founder_name,
+                "created_at": time.time()
             }
 
             # Zakazivanje automatskog brisanja nakon 60 minuta (3600 sekundi)
