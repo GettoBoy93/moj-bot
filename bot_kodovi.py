@@ -1,231 +1,175 @@
-import re
-import sqlite3
-import logging
 import os
-from datetime import datetime
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.enums import ParseMode
-import asyncio
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------
+# PODEŠAVANJA I BAZA U MEMORIJI
+# ---------------------------------------------------------
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-KOD_REGEX = r'\b[A-Za-z0-9]{6}\b'
+# Lista Telegram ID-jeva osnivača
+FOUNDER_IDS = [123456789]  # Zameni sa pravim Telegram ID-jevima
 
-DATA_DIR = "/app/data"
-if os.path.exists(DATA_DIR):
-    DB_PATH = os.path.join(DATA_DIR, "kodovi.db")
-else:
-    DB_PATH = "kodovi.db"
+ACTIVE_CODES = {} 
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+# ---------------------------------------------------------
+# HANDLER ZA FOUNDER-E (OBJAVA KODA)
+# ---------------------------------------------------------
 
-# --- BAZA PODATAKA ---
-def init_db():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS kodovi (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kod TEXT UNIQUE,
-                founder TEXT,
-                founder_user_id INTEGER,
-                broj_kopiranja INTEGER DEFAULT 1,
-                vreme_objave TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                aktivan INTEGER DEFAULT 1
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS preuzimanja (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kod TEXT,
-                user_id INTEGER,
-                vreme TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(kod, user_id)
-            )
-        """)
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logging.error(f"Greska pri inickalizaciji baze: {e}")
-
-init_db()
-
-def dodaj_kod(kod, founder_name, founder_user_id):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        vreme_sada = datetime.now()
-        
-        cursor.execute("""
-            INSERT INTO kodovi (kod, founder, founder_user_id, broj_kopiranja, vreme_objave)
-            VALUES (?, ?, ?, 1, ?)
-        """, (kod, founder_name, founder_user_id, vreme_sada))
-        
-        cursor.execute("""
-            INSERT OR IGNORE INTO preuzimanja (kod, user_id)
-            VALUES (?, ?)
-        """, (kod, founder_user_id))
-        
-        conn.commit()
-        conn.close()
-        return True, "OK"
-    except sqlite3.IntegrityError:
-        return False, "KOD_POSTOJI"
-    except Exception as e:
-        return False, str(e)
-
-def dohvati_aktivne_kodove():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT kod, founder, broj_kopiranja, vreme_objave 
-            FROM kodovi 
-            WHERE aktivan = 1 AND broj_kopiranja < 30
-            ORDER BY vreme_objave DESC
-        """)
-        redovi = cursor.fetchall()
-        conn.close()
-    except Exception as e:
-        logging.error(f"Greska pri citanju iz baze: {e}")
-        redovi = []
-    
-    rezultat = []
-    sada = datetime.now()
-    for kod, founder, broj_kopiranja, vreme_objave in redovi:
-        try:
-            if isinstance(vreme_objave, str):
-                vreme_dt = datetime.fromisoformat(vreme_objave.replace(" ", "T"))
-            else:
-                vreme_dt = vreme_objave
-            
-            proteklo_minuta = int((sada - vreme_dt).total_seconds() // 60)
-            preostalo_minuta = max(0, 60 - proteklo_minuta)
-            
-            if preostalo_minuta > 0:
-                rezultat.append({
-                    'kod': kod,
-                    'founder': founder,
-                    'broj_kopiranja': broj_kopiranja,
-                    'preostalo_minuta': preostalo_minuta
-                })
-        except Exception:
-            rezultat.append({
-                'kod': kod,
-                'founder': founder,
-                'broj_kopiranja': broj_kopiranja,
-                'preostalo_minuta': 60
-            })
-            
-    return rezultat
-
-def napravi_tastaturu_za_kod(kod, broj_kopiranja=1):
-    builder = InlineKeyboardBuilder()
-    link_url = f"https://miningperia.com/pages/join.php?custom={kod}"
-    builder.button(
-        text=f"🎁 Preuzmi kod ({broj_kopiranja}/30)",
-        url=link_url
-    )
-    return builder.as_markup()
-
-# --- KOMANDE ---
-
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    await message.answer("Zdravo! Ja sam bot za PERIA kodove.")
-
-@dp.message(Command("aktivno"))
-async def cmd_aktivno(message: types.Message):
-    try:
-        aktivni = dohvati_aktivne_kodove()
-        if not aktivni:
-            await message.answer("Trenutno nema aktivnih kodova.")
-            return
-        
-        tekst = "<b>🔥 AKTIVNI KODOVI:</b>\n\n"
-        builder = InlineKeyboardBuilder()
-        
-        for item in aktivni:
-            tekst += (
-                f"• Osnivač: <b>{item['founder']}</b>\n"
-                f"   ⏱ Preostalo: <b>{item['preostalo_minuta']} min</b> | 📊 Popunjeno: <b>{item['broj_kopiranja']}/30</b>\n\n"
-            )
-            builder.button(
-                text=f"🎁 Preuzmi kod ({item['founder']}) ({item['broj_kopiranja']}/30)",
-                url=f"https://miningperia.com/pages/join.php?custom={item['kod']}"
-            )
-        
-        builder.adjust(1)
-        await message.answer(tekst, parse_mode=ParseMode.HTML, reply_markup=builder.as_markup())
-    except Exception as e:
-        await message.answer(f"Došlo je do greške u komandi: {e}")
-
-# --- OBRAĐIVANJE PORUKA ---
-
-@dp.message(F.text)
-async def obradi_poruku(message: types.Message):
-    if message.text.startswith("/"):
+async def handle_founder_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Kada Founder pošalje kod, bot briše njegovu poruku, 
+    odmah uračunava Founder-a kao prvog korisnika (1/30)
+    i objavljuje novu poruku sa dugmetom.
+    """
+    if not update.message or not update.message.text:
         return
 
-    try:
-        korisnik = message.from_user
-        username = f"@{korisnik.username}" if korisnik.username else korisnik.first_name
-        user_id = korisnik.id
+    founder_id = update.effective_user.id
+    text = update.message.text.strip().upper()
 
-        pronadjeni_kodovi = re.findall(KOD_REGEX, message.text)
-        if not pronadjeni_kodovi:
+    # Proverava da li je pošiljalac Founder
+    if founder_id in FOUNDER_IDS:
+        code = text
+        max_limit = 30
+        
+        # 1. Registrujemo kod i ODMAH dodajemo Founder-a u claimed_users (startuje od 1/30)
+        ACTIVE_CODES[code] = {
+            "max_uses": max_limit,
+            "current_uses": 1,  # Startuje od 1 jer si ti prvi!
+            "claimed_users": {founder_id},  # Founder se automatski upisuje
+            "reward": 100
+        }
+
+        # Ovde po potrebi dodaješ nagradu i Founder-u u bazi:
+        # add_user_points(founder_id, 100)
+
+        # 2. Brišemo originalnu Founder poruku
+        try:
+            await update.message.delete()
+        except Exception as e:
+            logger.warning(f"Nije moguće obrisati poruku: {e}")
+
+        # 3. Pravimo dugme za preuzimanje
+        keyboard = [
+            [InlineKeyboardButton(f"🎁 Preuzmi kod {code}", callback_data=f"claim_{code}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # 4. Bot šalje zvaničnu objavu sa početnim stanjem 1/30
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=(
+                f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
+                f"Kod: `{code}`\n"
+                f"Iskorišćeno: **1/{max_limit}**\n\n"
+                f"Kliknite na dugme ispod da preuzmete nagradu!"
+            ),
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+
+# ---------------------------------------------------------
+# HANDLER ZA KLIK NA DUGME
+# ---------------------------------------------------------
+
+async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Obrađuje klik na dugme 'Preuzmi kod'.
+    Povećava brojač za sledeće korisnike i sprečava duplo preuzimanje.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    data = query.data
+
+    if data.startswith("claim_"):
+        code = data.replace("claim_", "")
+
+        if code not in ACTIVE_CODES:
+            await query.message.reply_text("❌ Ovaj kod više nije aktivan.", quote=True)
             return
 
-        for kod in pronadjeni_kodovi:
-            kod_velika = kod.upper()
-            uspesno, status = dodaj_kod(kod_velika, username, user_id)
-            
-            if uspesno:
-                tekst_poruke = (
-                    f"🚨 <b>NOVI KOD OD OSNIVAČA:</b> {username}\n\n"
-                    f"Pridruži se PERIA grupi za rudarenje!\n"
-                    f"Otvori <b>MiningPeria → Mining → Custom</b>\n\n"
-                    f"👉 <i>Kliknite na dugme ispod da preuzmete kod!</i>\n\n"
-                    f"📊 Popunjeno: <b>1/30</b>\n"
-                    f"⏱ Važi još: <b>60 min</b>"
-                )
-                
-                nova_poruka = await message.answer(
-                    tekst_poruke,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=napravi_tastaturu_za_kod(kod_velika, 1)
-                )
-                
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
+        code_data = ACTIVE_CODES[code]
 
-                try:
-                    await bot.pin_chat_message(
-                        chat_id=message.chat.id,
-                        message_id=nova_poruka.message_id,
-                        disable_notification=False
-                    )
-                except Exception:
-                    pass
-            elif status == "KOD_POSTOJI":
-                await message.answer(f"⚠️ Kod <b>{kod_velika}</b> je već objavljen ranije!", parse_mode=ParseMode.HTML)
-            else:
-                await message.answer(f"❌ Greška pri upisu u bazu: {status}")
+        # 1. Provera da li je korisnik (ili Founder) već u listi
+        if user_id in code_data["claimed_users"]:
+            await query.message.reply_text(
+                "⚠️ Već ste preuzeli ovaj promo kod! Svaki korisnik može iskoristiti kod samo jednom.",
+                quote=True
+            )
+            return
 
-    except Exception as e:
-        await message.answer(f"❌ Neočekivana greška u botu: {e}")
+        # 2. Provera da li je popunjen maksimalan broj mesta (30/30)
+        if code_data["current_uses"] >= code_data["max_uses"]:
+            await query.message.reply_text("❌ Sva mesta za ovaj kod su popunjena!", quote=True)
+            return
 
-async def main():
-    print("Bot je pokrenut...")
-    await dp.start_polling(bot)
+        # 3. Uspelo preuzimanje: Registrujemo novog korisnika i povećavamo brojač
+        code_data["claimed_users"].add(user_id)
+        code_data["current_uses"] += 1
+
+        current = code_data["current_uses"]
+        max_limit = code_data["max_uses"]
+
+        # Ovde dodaješ nagradu novom korisniku u bazu:
+        # add_user_points(user_id, code_data['reward'])
+
+        # 4. Ažuriramo brojač u poruci u grupi (npr. sa 1/30 na 2/30)
+        keyboard = [
+            [InlineKeyboardButton(f"🎁 Preuzmi kod {code}", callback_data=f"claim_{code}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        try:
+            await query.edit_message_text(
+                text=(
+                    f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
+                    f"Kod: `{code}`\n"
+                    f"Iskorišćeno: **{current}/{max_limit}**\n\n"
+                    f"Kliknite na dugme ispod da preuzmete nagradu!"
+                ),
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
+        # Šaljemo obaveštenje korisniku
+        await query.message.reply_text(
+            f"🎉 Uspešno ste preuzeli kod `{code}`! Dobili ste {code_data['reward']} poena.",
+            parse_mode="Markdown",
+            quote=True
+        )
+
+# ---------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------
+
+def main():
+    BOT_TOKEN = os.getenv("BOT_TOKEN", "TVOJ_TELEGRAM_BOT_TOKEN")
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CallbackQueryHandler(handle_button_click))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_founder_code))
+
+    logger.info("Bot pokrenut...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
