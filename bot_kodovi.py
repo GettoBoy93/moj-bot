@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 ACTIVE_CODES = {}
 
-# SVIH 12 OSNIVAČA + VLASNIK GRUPE
+# SVIH 13 OSNIVAČA + VLASNIK GRUPE
 FOUNDERS = [
     "@PERIABOY",
     "@jagodica113",
@@ -33,7 +33,8 @@ FOUNDERS = [
     "@evanescence83",
     "@rajder987",
     "@PeroPericaVezo",
-    "@aei123_AI"
+    "@aei123_AI",
+    "@Iken2014"
 ]
 
 def check_is_founder(user) -> bool:
