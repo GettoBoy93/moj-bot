@@ -5,7 +5,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    CallbackQueryHandler,
     MessageHandler,
     ContextTypes,
     filters
@@ -50,14 +49,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Odgovor na /start komandu."""
     await update.message.reply_text(
         "👋 Zdravo! Dobrodošli u MiningPeria promo bot.\n\n"
-        "Upotrebite komandu /aktivno da vidite trenutno dostupne promo kodove i preuzmete nagrade!"
+        "Upotrebite komandu /aktivno da vidite trenutno dostupne promo kodove!"
     )
 
 
 async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Komanda /aktivno otvorena za sve korisnike.
-    Sakriva sam kod i prikazuje dugme za preuzimanje ispod svakog stavke.
+    Prikazuje samo naziv osnivača i dugme sa direktnim URL linkom do sajta.
     """
     if not ACTIVE_CODES:
         await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
@@ -68,14 +67,14 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for i, (code, data) in enumerate(ACTIVE_CODES.items(), 1):
         founder_display = data.get("founder", "Osnivač")
+        generated_link = f"https://miningperia.com/pages/join.php?custom={code}"
+        
         poruka += (
             f"🔹 **Promo Kod #{i}** (Founder: {founder_display})\n"
-            f"   • Iskorišćeno: **{data['current_uses']}/{data['max_uses']}**\n"
-            f"   • Nagrada: **{data['reward']} poena**\n"
             f"----------------------------------\n"
         )
         keyboard.append([
-            InlineKeyboardButton(f"🎁 Preuzmi Kod #{i}", callback_data=f"claim_{code}")
+            InlineKeyboardButton(f"🚀 Preuzmi Kod #{i}", url=generated_link)
         ])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -101,16 +100,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code))
 
         if is_valid_format:
-            max_uses = 30
-            
-            # Određujemo ime ili username osnivača za prikaz
             founder_name = f"@{user.username}" if user.username else user.first_name
 
             ACTIVE_CODES[code] = {
-                "max_uses": max_uses,
-                "current_uses": 1,
-                "claimed_users": {user.id},
-                "reward": 100,
                 "founder": founder_name
             }
 
@@ -119,86 +111,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"Nije moguće obrisati poruku: {e}")
 
+            # Generisanje direktnog linka
+            generated_link = f"https://miningperia.com/pages/join.php?custom={code}"
+
             keyboard = [
-                [InlineKeyboardButton("🎁 Preuzmi Kod", callback_data=f"claim_{code}")]
+                [InlineKeyboardButton("🚀 Preuzmi Kod", url=generated_link)]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            # Izmenjen tekst: umesto "Kod: XXXXXX" piše "Founder: @username"
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=(
                     f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
-                    f"Founder: **{founder_name}**\n"
-                    f"Iskorišćeno: **1/{max_uses}**\n\n"
+                    f"Founder: **{founder_name}**\n\n"
                     f"Kliknite na dugme ispod da preuzmete nagradu!"
                 ),
                 reply_markup=reply_markup,
                 parse_mode="Markdown"
             )
             return
-
-
-async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    user_id = query.from_user.id
-    data = query.data
-
-    if data.startswith("claim_"):
-        code = data.replace("claim_", "")
-
-        if code not in ACTIVE_CODES:
-            await query.message.reply_text("❌ Ovaj kod više nije aktivan.", quote=True)
-            return
-
-        code_data = ACTIVE_CODES[code]
-
-        if user_id in code_data["claimed_users"]:
-            await query.message.reply_text(
-                "⚠️ Već ste preuzeli ovaj promo kod!",
-                quote=True
-            )
-            return
-
-        if code_data["current_uses"] >= code_data["max_uses"]:
-            await query.message.reply_text("❌ Sva mesta za ovaj kod su popunjena!", quote=True)
-            return
-
-        code_data["claimed_users"].add(user_id)
-        code_data["current_uses"] += 1
-
-        current = code_data["current_uses"]
-        max_limit = code_data["max_uses"]
-        founder_name = code_data.get("founder", "Osnivač")
-
-        # Osvežavanje poruke ako je reč o objavi u grupi
-        if "🔥 **NOVI PROMO KOD!** 🔥" in (query.message.text or ""):
-            keyboard = [
-                [InlineKeyboardButton("🎁 Preuzmi Kod", callback_data=f"claim_{code}")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            try:
-                await query.edit_message_text(
-                    text=(
-                        f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
-                        f"Founder: **{founder_name}**\n"
-                        f"Iskorišćeno: **{current}/{max_limit}**\n\n"
-                        f"Kliknite na dugme ispod da preuzmete nagradu!"
-                    ),
-                    reply_markup=reply_markup,
-                    parse_mode="Markdown"
-                )
-            except Exception:
-                pass
-
-        await query.message.reply_text(
-            "🎉 Uspešno ste preuzeli promo kod!",
-            parse_mode="Markdown",
-            quote=True
-        )
 
 
 def main():
@@ -211,7 +142,6 @@ def main():
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("aktivno", aktivno_command))
-    app.add_handler(CallbackQueryHandler(handle_button_click))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
     logger.info("Bot uspešno pokrenut...")
