@@ -1,0 +1,22 @@
+name: Deploy to Oracle Server
+
+on:
+  push:
+    branches:
+      - main  # Ako ti se glavna grana zove 'master', ovde promeni u master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Executing remote SSH commands
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/moj-bot
+            git pull
+            tmux kill-session -t bot || true
+            tmux new-session -d -s bot "source venv/bin/activate && python3 bot_kodovi.py"
