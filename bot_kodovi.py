@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import json
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -17,9 +18,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Fajl za trajno čuvanje kodova na serveru
+DATA_FILE = "active_codes.json"
 ACTIVE_CODES = {}
 
-# UKUPNO 15 OSNIVAČA
+# SVIH 15 ZVANIČNIH FOUNDER-A
 FOUNDERS = [
     "@PERIABOY",
     "@jagodica113",
@@ -37,6 +40,28 @@ FOUNDERS = [
     "@aei123_AI",
     "@AleksandarVujic"
 ]
+
+def load_codes():
+    """Učitava sačuvane kodove iz JSON fajla prilikom pokretanja bota."""
+    global ACTIVE_CODES
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                ACTIVE_CODES = json.load(f)
+            logger.info("Aktivni kodovi uspešno učitani iz fajla.")
+        except Exception as e:
+            logger.error(f"Greška pri učitavanju kodova: {e}")
+            ACTIVE_CODES = {}
+    else:
+        ACTIVE_CODES = {}
+
+def save_codes():
+    """Čuva trenutne aktivne kodove u JSON fajl."""
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(ACTIVE_CODES, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Greška pri čuvanju kodova: {e}")
 
 def check_is_founder(user) -> bool:
     if not user:
@@ -78,7 +103,7 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elapsed_seconds = current_time - data.get("created_at", current_time)
         remaining_seconds = 3600 - elapsed_seconds
 
-        # Ako je proslo vise od 60 min, markiraj za brisanje
+        # Ako je prošlo više od 60 min, markiraj za brisanje
         if remaining_seconds <= 0:
             expired_codes.append(code)
             continue
@@ -98,9 +123,11 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         index += 1
 
     # Obrisati sve kodove koji su u međuvremenu istekli
-    for code in expired_codes:
-        if code in ACTIVE_CODES:
-            del ACTIVE_CODES[code]
+    if expired_codes:
+        for code in expired_codes:
+            if code in ACTIVE_CODES:
+                del ACTIVE_CODES[code]
+        save_codes()
 
     if not keyboard:
         await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
@@ -131,6 +158,7 @@ async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if code_to_delete in ACTIVE_CODES:
         del ACTIVE_CODES[code_to_delete]
+        save_codes()
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"✅ Promo kod `{code_to_delete}` je uspešno uklonjen iz aktivnih kodova.",
@@ -149,6 +177,7 @@ async def auto_expire_code(context: ContextTypes.DEFAULT_TYPE):
     code = context.job.data
     if code in ACTIVE_CODES:
         del ACTIVE_CODES[code]
+        save_codes()
         logger.info(f"Kod {code} je automatski istekao i obrisan je posle 60 minuta.")
 
 
@@ -177,6 +206,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "founder": founder_name,
                 "created_at": time.time()
             }
+            save_codes()
 
             # Zakazivanje automatskog brisanja nakon 60 minuta (3600 sekundi)
             if context.job_queue:
@@ -217,6 +247,9 @@ def main():
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN nije podešen!")
         return
+
+    # Učitavanje sačuvanih kodova iz fajla
+    load_codes()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
