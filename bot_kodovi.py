@@ -3,6 +3,7 @@ import re
 import time
 import json
 import logging
+import html
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -95,7 +96,8 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     current_time = time.time()
     expired_codes = []
-    poruka = "📊 **PREGLED AKTIVNIH PROMO KODOVA:**\n\n"
+    poruka = "📊 <b>PREGLED AKTIVNIH PROMO KODOVA:</b>\n\n"
+    poruka_plain = "📊 PREGLED AKTIVNIH PROMO KODOVA:\n\n"
     keyboard = []
     index = 1
 
@@ -109,12 +111,18 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue
 
         remaining_minutes = int(remaining_seconds // 60)
-        founder_display = data.get("founder", "Osnivač")
+        founder_display = str(data.get("founder", "Osnivač"))
+        founder_safe = html.escape(founder_display)
         generated_link = f"https://miningperia.com/pages/join.php?custom={code}"
 
         poruka += (
-            f"🔹 **Promo Kod #{index}** (Founder: {founder_display})\n"
-            f"   • Preostalo: **{remaining_minutes} min**\n"
+            f"🔹 <b>Promo Kod #{index}</b> (Founder: {founder_safe})\n"
+            f"   • Preostalo: <b>{remaining_minutes} min</b>\n"
+            f"----------------------------------\n"
+        )
+        poruka_plain += (
+            f"🔹 Promo Kod #{index} (Founder: {founder_display})\n"
+            f"   • Preostalo: {remaining_minutes} min\n"
             f"----------------------------------\n"
         )
         keyboard.append([
@@ -134,7 +142,13 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(poruka, reply_markup=reply_markup, parse_mode="Markdown")
+
+    try:
+        await update.message.reply_text(poruka, reply_markup=reply_markup, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Greška pri slanju HTML poruke u /aktivno: {e}")
+        # Rezervni plan - šalje običan tekst ako HTML zakatači
+        await update.message.reply_text(poruka_plain, reply_markup=reply_markup)
 
 
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,7 +160,7 @@ async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args:
-        await update.message.reply_text("⚠️ Primer upotrebe: `/obrisi GH7M6C` ili `/del GH7M6C`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Primer upotrebe: /obrisi GH7M6C ili /del GH7M6C")
         return
 
     code_to_delete = context.args[0].strip().upper()
@@ -161,14 +175,12 @@ async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_codes()
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"✅ Promo kod `{code_to_delete}` je uspešno uklonjen iz aktivnih kodova.",
-            parse_mode="Markdown"
+            text=f"✅ Promo kod {code_to_delete} je uspešno uklonjen iz aktivnih kodova."
         )
     else:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Kod `{code_to_delete}` nije pronađen među aktivnim kodovima.",
-            parse_mode="Markdown"
+            text=f"❌ Kod {code_to_delete} nije pronađen među aktivnim kodovima."
         )
 
 
@@ -229,11 +241,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
+            founder_safe = html.escape(founder_name)
+
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=(
                     f"🔥 <b>NOVI PROMO KOD!</b> 🔥\n\n"
-                    f"Founder: <b>{founder_name}</b>\n\n"
+                    f"Founder: <b>{founder_safe}</b>\n\n"
                     f"Kliknite na dugme ispod da preuzmete nagradu!"
                 ),
                 reply_markup=reply_markup,
