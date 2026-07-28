@@ -232,12 +232,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=(
-                    f"🔥 **NOVI PROMO KOD!** 🔥\n\n"
-                    f"Founder: **{founder_name}**\n\n"
+                    f"🔥 <b>NOVI PROMO KOD!</b> 🔥\n\n"
+                    f"Founder: <b>{founder_name}</b>\n\n"
                     f"Kliknite na dugme ispod da preuzmete nagradu!"
                 ),
                 reply_markup=reply_markup,
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
             return
 
