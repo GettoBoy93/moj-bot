@@ -97,21 +97,38 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     current_time = time.time()
-    expired_codes = []
+    valid_codes = {}
+    expired_found = False
+
+    # Provera i čišćenje isteklih kodova
+    for code, data in list(ACTIVE_CODES.items()):
+        created_at = data.get("created_at", current_time)
+        elapsed_seconds = current_time - created_at
+
+        if elapsed_seconds < 3600:
+            valid_codes[code] = data
+        else:
+            expired_found = True
+
+    # Ako je bilo isteklih kodova, ažuriraj memoriju i fajl
+    if expired_found:
+        ACTIVE_CODES.clear()
+        ACTIVE_CODES.update(valid_codes)
+        save_codes()
+
+    if not ACTIVE_CODES:
+        await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
+        return
+
     poruka = "📊 <b>PREGLED AKTIVNIH PROMO KODOVA:</b>\n\n"
     poruka_plain = "📊 PREGLED AKTIVNIH PROMO KODOVA:\n\n"
     keyboard = []
     index = 1
 
-    for code, data in list(ACTIVE_CODES.items()):
+    for code, data in ACTIVE_CODES.items():
         created_at = data.get("created_at", current_time)
         elapsed_seconds = current_time - created_at
         remaining_seconds = 3600 - elapsed_seconds
-
-        # Ako je prošlo više od 60 min, markiraj za brisanje
-        if remaining_seconds <= 0:
-            expired_codes.append(code)
-            continue
 
         remaining_minutes = max(1, int(remaining_seconds // 60))
         founder_display = str(data.get("founder", "Osnivač"))
@@ -132,17 +149,6 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton(f"🚀 Preuzmi Kod #{index}", url=generated_link)
         ])
         index += 1
-
-    # Obrisati sve kodove koji su u međuvremenu istekli
-    if expired_codes:
-        for code in expired_codes:
-            if code in ACTIVE_CODES:
-                del ACTIVE_CODES[code]
-        save_codes()
-
-    if not keyboard:
-        await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
-        return
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -267,15 +273,17 @@ async def restore_jobs_on_startup(app):
     """
     load_codes()
     current_time = time.time()
-    expired = []
+    valid_codes = {}
+    expired_found = False
 
     for code, data in list(ACTIVE_CODES.items()):
         created_at = data.get("created_at", current_time)
         remaining = 3600 - (current_time - created_at)
 
         if remaining <= 0:
-            expired.append(code)
+            expired_found = True
         else:
+            valid_codes[code] = data
             if app.job_queue:
                 app.job_queue.run_once(
                     auto_expire_code,
@@ -285,10 +293,9 @@ async def restore_jobs_on_startup(app):
                 )
                 logger.info(f"Obnovljen tajmer za kod {code}: preostalo {int(remaining)} sekundi.")
 
-    if expired:
-        for code in expired:
-            if code in ACTIVE_CODES:
-                del ACTIVE_CODES[code]
+    if expired_found:
+        ACTIVE_CODES.clear()
+        ACTIVE_CODES.update(valid_codes)
         save_codes()
 
 
