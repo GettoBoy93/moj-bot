@@ -4,8 +4,6 @@ import time
 import json
 import logging
 import html
-import requests
-from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -69,7 +67,7 @@ def save_codes():
     except Exception as e:
         logger.error(f"Greška pri čuvanju kodova: {e}")
 
-def check_is_founder(user) -> bool:
+def check_is_founder(user) ->bool:
     if not user:
         return False
     if user.id in FOUNDERS:
@@ -80,57 +78,6 @@ def check_is_founder(user) -> bool:
         if user_uname in founders_lower:
             return True
     return False
-
-
-def get_group_status_from_web(code: str):
-    """
-    Pomoćna funkcija koja preko requests i BeautifulSoup 
-    čita tekst direktno sa miningperia stranice za dati kod.
-    """
-    url = f"https://miningperia.com/pages/join.php?custom={code}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        # Ako sajt vrati bilo kakvu blokadu ili grešku (npr. 403, 503), tretiramo kao nevažeće/sumnjivo
-        if response.status_code != 200:
-            logger.warning(f"Sajt je vratio status {response.status_code} za kod {code}")
-            return "Greška", "Blokiran/Greška servera", True
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        page_text = soup.get_text()
-        page_text_lower = page_text.lower()
-        
-        # Provera ključnih reči za greške, nevažeće kodove ili pune grupe
-        is_invalid_or_full = False
-        bad_phrases = [
-            "already started or is full", 
-            "is full", 
-            "has already started", 
-            "group code is invalid", 
-            "is invalid",
-            "invalid code"
-        ]
-        if any(phrase in page_text_lower for phrase in bad_phrases):
-            is_invalid_or_full = True
-
-        # Pokušavamo da izvučemo broj članova (npr. "8 joined")
-        members_text = "Nepoznato"
-        match = re.search(r'(\d+)\s+joined', page_text, re.IGNORECASE)
-        if match:
-            members_text = f"{match.group(1)} članova"
-        else:
-            if is_invalid_or_full:
-                members_text = "Nevažeći / Pun kod"
-            else:
-                members_text = "Aktivna"
-
-        return "", members_text, is_invalid_or_full
-    except Exception as e:
-        logger.error(f"Greška pri parsiranju sajta za kod {code}: {e}")
-        return "Greška", "N/A", True
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -144,8 +91,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Komanda /aktivno otvorena za sve korisnike.
-    Prikazuje osnivača, preostale minute, broj članova i dugme sa linkom.
-    Automatski izbacuje kodove koji su u međuvremenu postali puni ili nevažeći.
+    Prikazuje osnivača, preostale minute do isteka koda i dugme sa linkom.
     """
     load_codes()
 
@@ -157,22 +103,17 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     valid_codes = {}
     expired_found = False
 
+    # Provera i čišćenje isteklih kodova
     for code, data in list(ACTIVE_CODES.items()):
         created_at = data.get("created_at", current_time)
         elapsed_seconds = current_time - created_at
 
-        if elapsed_seconds >= 3600:
+        if elapsed_seconds < 3600:
+            valid_codes[code] = data
+        else:
             expired_found = True
-            continue
 
-        # Provera sa sajta – ako je kod nevažeći ili pun, uklanjamo ga
-        _, _, is_invalid_or_full = get_group_status_from_web(code)
-        if is_invalid_or_full:
-            expired_found = True
-            continue
-
-        valid_codes[code] = data
-
+    # Ako je bilo isteklih kodova, ažuriraj memoriju i fajl
     if expired_found:
         ACTIVE_CODES.clear()
         ACTIVE_CODES.update(valid_codes)
@@ -195,20 +136,16 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         remaining_minutes = max(1, int(remaining_seconds // 60))
         founder_display = str(data.get("founder", "Osnivač"))
         founder_safe = html.escape(founder_display)
-        
-        _, members_info, _ = get_group_status_from_web(code)
         generated_link = f"https://miningperia.com/pages/join.php?custom={code}"
 
         poruka += (
             f"🔹 <b>Promo Kod #{index}</b> (Founder: {founder_safe})\n"
-            f"   • Preostalo vreme: <b>{remaining_minutes} min</b>\n"
-            f"   • Status/Članovi: <b>{members_info}</b>\n"
+            f"   • Preostalo: <b>{remaining_minutes} min</b>\n"
             f"----------------------------------\n"
         )
         poruka_plain += (
             f"🔹 Promo Kod #{index} (Founder: {founder_display})\n"
-            f"   • Preostalo vreme: {remaining_minutes} min\n"
-            f"   • Status/Članovi: {members_info}\n"
+            f"   • Preostalo: {remaining_minutes} min\n"
             f"----------------------------------\n"
         )
         keyboard.append([
@@ -223,46 +160,6 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Greška pri slanju HTML poruke u /aktivno: {e}")
         await update.message.reply_text(poruka_plain, reply_markup=reply_markup)
-
-
-async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Pozadinski zadatak koji se izvršava na svakih 60 sekundi.
-    Proverava sve aktivne kodove i briše nevažeće, pune ili istečene.
-    """
-    load_codes()
-    if not ACTIVE_CODES:
-        return
-
-    current_time = time.time()
-    codes_to_remove = []
-
-    for code, data in list(ACTIVE_CODES.items()):
-        if current_time - data.get("created_at", current_time) >= 3600:
-            codes_to_remove.append(code)
-            continue
-
-        _, _, is_invalid_or_full = get_group_status_from_web(code)
-        if is_invalid_or_full:
-            codes_to_remove.append(code)
-            founder_name = data.get("founder", "Osnivač")
-            chat_id = data.get("chat_id")
-            if chat_id:
-                try:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=f"⚠️ <b>Kod {code} (Founder: {founder_name}) je nevažeći ili je grupa puna!</b>\nKod je uklonjen iz aktivnih.",
-                        parse_mode="HTML"
-                    )
-                except Exception as e:
-                    logger.error(f"Greška pri slanju obaveštenja: {e}")
-
-    if codes_to_remove:
-        for code in codes_to_remove:
-            if code in ACTIVE_CODES:
-                del ACTIVE_CODES[code]
-        save_codes()
-        logger.info(f"Pozadinski job uklonio nevažeće/pune kodove: {codes_to_remove}")
 
 
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -328,30 +225,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code))
 
         if is_valid_format:
-            # Provera statusa sa sajta PRE prihvatanja koda
-            _, _, is_invalid_or_full = get_group_status_from_web(code)
-            if is_invalid_or_full:
-                try:
-                    await update.message.delete()
-                except Exception:
-                    pass
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f"❌ Kod <b>{code}</b> je <b>nevažeći</b> ili je grupa već <b>puna</b> na sajtu! Nije prihvaćen.",
-                    parse_mode="HTML"
-                )
-                return
-
             founder_name = f"@{user.username}" if user.username else user.first_name
 
             load_codes()
             ACTIVE_CODES[code] = {
                 "founder": founder_name,
-                "created_at": time.time(),
-                "chat_id": update.effective_chat.id
+                "created_at": time.time()
             }
             save_codes()
 
+            # Zakazivanje automatskog brisanja nakon 60 minuta (3600 sekundi)
             if context.job_queue:
                 context.job_queue.run_once(
                     auto_expire_code,
@@ -388,7 +271,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def restore_jobs_on_startup(app):
-    """Pri pokretanju bota obnavlja tajmere za brisanje iz trajne memorije."""
+    """
+    Pri pokretanju bota obnavlja tajmere za brisanje iz trajne memorije.
+    """
     load_codes()
     current_time = time.time()
     valid_codes = {}
@@ -401,12 +286,6 @@ async def restore_jobs_on_startup(app):
         if remaining <= 0:
             expired_found = True
         else:
-            # Provera sa sajta pri restartu
-            _, _, is_invalid_or_full = get_group_status_from_web(code)
-            if is_invalid_or_full:
-                expired_found = True
-                continue
-
             valid_codes[code] = data
             if app.job_queue:
                 app.job_queue.run_once(
@@ -438,16 +317,11 @@ def main():
     app.add_handler(CommandHandler(["obrisi", "del"], obrisi_command))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
+    # Obnavljanje tajmera pri restartu
     if app.job_queue:
         app.job_queue.run_once(lambda ctx: restore_jobs_on_startup(app), when=1)
-        app.job_queue.run_repeating(
-            background_group_check_job,
-            interval=60,
-            first=10,
-            name="background_group_check"
-        )
 
-    logger.info("Bot uspešno pokrenut sa bezbednijom proverom statusa...")
+    logger.info("Bot uspešno pokrenut...")
     app.run_polling()
 
 if __name__ == "__main__":
