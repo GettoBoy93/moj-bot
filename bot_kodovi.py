@@ -86,29 +86,32 @@ def get_group_status_from_web(code: str):
     """
     Pomoćna funkcija koja preko requests i BeautifulSoup 
     čita tekst direktno sa miningperia stranice za dati kod.
-    Vraća (status_text, members_text, is_invalid_or_full)
     """
     url = f"https://miningperia.com/pages/join.php?custom={code}"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
+        
+        # Ako sajt vrati bilo kakvu blokadu ili grešku (npr. 403, 503), tretiramo kao nevažeće/sumnjivo
         if response.status_code != 200:
-            return "Nepoznato", "N/A", False
+            logger.warning(f"Sajt je vratio status {response.status_code} za kod {code}")
+            return "Greška", "Blokiran/Greška servera", True
 
         soup = BeautifulSoup(response.text, "html.parser")
         page_text = soup.get_text()
         page_text_lower = page_text.lower()
         
-        # Provera da li je grupa puna, zatvorena ili je kod nevažeći
+        # Provera ključnih reči za greške, nevažeće kodove ili pune grupe
         is_invalid_or_full = False
         bad_phrases = [
             "already started or is full", 
             "is full", 
             "has already started", 
             "group code is invalid", 
-            "is invalid"
+            "is invalid",
+            "invalid code"
         ]
         if any(phrase in page_text_lower for phrase in bad_phrases):
             is_invalid_or_full = True
@@ -127,7 +130,7 @@ def get_group_status_from_web(code: str):
         return "", members_text, is_invalid_or_full
     except Exception as e:
         logger.error(f"Greška pri parsiranju sajta za kod {code}: {e}")
-        return "Greška", "N/A", False
+        return "Greška", "N/A", True
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -248,7 +251,7 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(
                         chat_id=chat_id,
-                        text=f"⚠️ <b>Kod {code} (Founder: {founder_name}) je nevažeći ili puna grupa!</b>\nKod je uklonjen iz aktivnih.",
+                        text=f"⚠️ <b>Kod {code} (Founder: {founder_name}) je nevažeći ili je grupa puna!</b>\nKod je uklonjen iz aktivnih.",
                         parse_mode="HTML"
                     )
                 except Exception as e:
@@ -444,7 +447,7 @@ def main():
             name="background_group_check"
         )
 
-    logger.info("Bot uspešno pokrenut sa proširenim proverama za nevažeće i pune kodove...")
+    logger.info("Bot uspešno pokrenut sa bezbednijom proverom statusa...")
     app.run_polling()
 
 if __name__ == "__main__":
