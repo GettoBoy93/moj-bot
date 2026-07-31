@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 DATA_FILE = "active_codes.json"
 ACTIVE_CODES = {}
 
-# SVIH 17 ZVANIČNIH FOUNDER-A
+# SVIH ZVANIČNIH FOUNDER-A
 FOUNDERS = [
     "@PERIABOY",
     "@jagodica113",
@@ -41,7 +41,8 @@ FOUNDERS = [
     "@aei123_AI",
     "@AleksandarVujic",
     "@Roboda66",
-    "@dulehak"
+    "@dulehak",
+    "@RaDe013"
 ]
 
 def load_codes():
