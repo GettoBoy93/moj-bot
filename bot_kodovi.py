@@ -4,6 +4,8 @@ import time
 import json
 import logging
 import html
+import requests
+from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -80,6 +82,52 @@ def check_is_founder(user) -> bool:
     return False
 
 
+def get_group_status_from_web(code: str):
+    """
+    Kratka pomoćna funkcija koja preko requests i BeautifulSoup 
+    čita podatke direktno sa miningperia stranice za dati kod.
+    Vraća (status_text, members_text, is_full_or_closed)
+    """
+    url = f"https://miningperia.com/pages/join.php?custom={code}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return "Nepoznato", "N/A", False
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Tražimo status grupe (.cstat)
+        status_element = soup.find(class_="cstat")
+        status_text = status_element.text.strip() if status_element else ""
+        
+        # Proveravamo da li je puna/zatvorena (klasa cstat-bad ili tekst)
+        is_bad = False
+        if status_element and "cstat-bad" in status_element.get("class", []):
+            is_bad = True
+        elif "full" in status_text.lower() or "started" in status_text.lower():
+            is_bad = True
+
+        # Pokušavamo da izvučemo broj članova (obično piše npr. "Group is open · 8 joined")
+        # Tražićemo tekst koji sadrži reč "joined" ili slično na stranici
+        members_text = "Nepoznato"
+        page_text = soup.get_text()
+        match = re.search(r'(\d+)\s+joined', page_text, re.IGNORECASE)
+        if match:
+            members_text = f"{match.group(1)} članova"
+        else:
+            # Možda pokupimo ceo tekst statusa ako sadrži info
+            if not is_bad and status_text:
+                members_text = status_text
+
+        return status_text, members_text, is_bad
+    except Exception as e:
+        logger.error(f"Greška pri parsiranju sajta za kod {code}: {e}")
+        return "Greška", "N/A", False
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Odgovor na /start komandu."""
     await update.message.reply_text(
@@ -91,7 +139,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Komanda /aktivno otvorena za sve korisnike.
-    Prikazuje osnivača, preostale minute do isteka koda i dugme sa linkom.
+    Prikazuje osnivača, preostale minute, broj članova i dugme sa linkom.
     """
     load_codes()
 
@@ -103,7 +151,7 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     valid_codes = {}
     expired_found = False
 
-    # Provera i čišćenje isteklih kodova
+    # Provera i čišćenje isteklih kodova (1 sat / 3600 sekundi)
     for code, data in list(ACTIVE_CODES.items()):
         created_at = data.get("created_at", current_time)
         elapsed_seconds = current_time - created_at
@@ -113,7 +161,6 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             expired_found = True
 
-    # Ako je bilo isteklih kodova, ažuriraj memoriju i fajl
     if expired_found:
         ACTIVE_CODES.clear()
         ACTIVE_CODES.update(valid_codes)
@@ -136,16 +183,22 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         remaining_minutes = max(1, int(remaining_seconds // 60))
         founder_display = str(data.get("founder", "Osnivač"))
         founder_safe = html.escape(founder_display)
+        
+        # Proveravamo trenutni broj članova uživo sa sajta
+        _, members_info, _ = get_group_status_from_web(code)
+
         generated_link = f"https://miningperia.com/pages/join.php?custom={code}"
 
         poruka += (
             f"🔹 <b>Promo Kod #{index}</b> (Founder: {founder_safe})\n"
-            f"   • Preostalo: <b>{remaining_minutes} min</b>\n"
+            f"   • Preostalo vreme: <b>{remaining_minutes} min</b>\n"
+            f"   • Status/Članovi: <b>{members_info}</b>\n"
             f"----------------------------------\n"
         )
         poruka_plain += (
             f"🔹 Promo Kod #{index} (Founder: {founder_display})\n"
-            f"   • Preostalo: {remaining_minutes} min\n"
+            f"   • Preostalo vreme: {remaining_minutes} min\n"
+            f"   • Status/Članovi: {members_info}\n"
             f"----------------------------------\n"
         )
         keyboard.append([
@@ -160,6 +213,54 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Greška pri slanju HTML poruke u /aktivno: {e}")
         await update.message.reply_text(poruka_plain, reply_markup=reply_markup)
+
+
+async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Pozadinski zadatak koji se izvršava na svakih 60 sekundi (1 minut).
+    Proverava sve aktivne kodove. Ako je grupa puna/zatvorena na sajtu,
+    briše kod iz aktivnih i obaveštava Telegram grupu.
+    """
+    load_codes()
+    if not ACTIVE_CODES:
+        return
+
+    current_time = time.time()
+    codes_to_remove = []
+
+    for code, data in list(ACTIVE_CODES.items()):
+        # Provera da li je isteklo 60 minuta (zlu ne trebalo, mada to rade i tajmeri)
+        if current_time - data.get("created_at", current_time) >= 3600:
+            codes_to_remove.append(code)
+            continue
+
+        # Provera statusa sa sajta
+        _, _, is_full = get_group_status_from_web(code)
+        if is_full:
+            codes_to_remove.append(code)
+            founder_name = data.get("founder", "Osnivač")
+            
+            # Slanje obaveštenja u čet gde je bot aktivan (ili zabeležen chat_id ako ga čuvamo)
+            # Ovde šaljemo na chat_id gde je kod registrovan ili podešen, 
+            # pošto job kontekst nema uvek definisan chat_id, poslaćemo svima gde bot ima memorisan chat ili preko globalnih obaveštenja.
+            # Ako želiš u određeni chat, možemo sačuvati chat_id u podatke koda:
+            chat_id = data.get("chat_id")
+            if chat_id:
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"⚠️ <b>Mining grupa za kod {code} (Founder: {founder_name}) je PUNA ili zatvorena!</b>\nKod je uklonjen iz aktivnih.",
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error(f"Greška pri slanju obaveštenja da je grupa puna: {e}")
+
+    if codes_to_remove:
+        for code in codes_to_remove:
+            if code in ACTIVE_CODES:
+                del ACTIVE_CODES[code]
+        save_codes()
+        logger.info(f"Pozadinski job uklonio kodove zbog popunjenosti/isteka: {codes_to_remove}")
 
 
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -230,7 +331,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             load_codes()
             ACTIVE_CODES[code] = {
                 "founder": founder_name,
-                "created_at": time.time()
+                "created_at": time.time(),
+                "chat_id": update.effective_chat.id  # Čuvamo chat_id da bi bot znao gde da pošalje obavestenje kad se grupa popuni
             }
             save_codes()
 
@@ -320,8 +422,16 @@ def main():
     # Obnavljanje tajmera pri restartu
     if app.job_queue:
         app.job_queue.run_once(lambda ctx: restore_jobs_on_startup(app), when=1)
+        
+        # Dodavanje pozadinskog zadatka koji se ponavlja na svakih 60 sekundi (1 minut)
+        app.job_queue.run_repeating(
+            background_group_check_job,
+            interval=60,
+            first=10,
+            name="background_group_check"
+        )
 
-    logger.info("Bot uspešno pokrenut...")
+    logger.info("Bot uspešno pokrenut sa pozadinskim proverama...")
     app.run_polling()
 
 if __name__ == "__main__":
