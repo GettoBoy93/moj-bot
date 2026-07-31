@@ -84,9 +84,9 @@ def check_is_founder(user) -> bool:
 
 def get_group_status_from_web(code: str):
     """
-    Kratka pomoćna funkcija koja preko requests i BeautifulSoup 
-    čita podatke direktno sa miningperia stranice za dati kod.
-    Vraća (status_text, members_text, is_full_or_closed)
+    Pomoćna funkcija koja preko requests i BeautifulSoup 
+    čita tekst direktno sa miningperia stranice za dati kod.
+    Vraća (status_text, members_text, is_invalid_or_full)
     """
     url = f"https://miningperia.com/pages/join.php?custom={code}"
     headers = {
@@ -98,31 +98,33 @@ def get_group_status_from_web(code: str):
             return "Nepoznato", "N/A", False
 
         soup = BeautifulSoup(response.text, "html.parser")
+        page_text = soup.get_text()
+        page_text_lower = page_text.lower()
         
-        # Tražimo status grupe (.cstat)
-        status_element = soup.find(class_="cstat")
-        status_text = status_element.text.strip() if status_element else ""
-        
-        # Proveravamo da li je puna/zatvorena (klasa cstat-bad ili tekst)
-        is_bad = False
-        if status_element and "cstat-bad" in status_element.get("class", []):
-            is_bad = True
-        elif "full" in status_text.lower() or "started" in status_text.lower():
-            is_bad = True
+        # Provera da li je grupa puna, zatvorena ili je kod nevažeći
+        is_invalid_or_full = False
+        bad_phrases = [
+            "already started or is full", 
+            "is full", 
+            "has already started", 
+            "group code is invalid", 
+            "is invalid"
+        ]
+        if any(phrase in page_text_lower for phrase in bad_phrases):
+            is_invalid_or_full = True
 
         # Pokušavamo da izvučemo broj članova (npr. "8 joined")
         members_text = "Nepoznato"
-        page_text = soup.get_text()
         match = re.search(r'(\d+)\s+joined', page_text, re.IGNORECASE)
         if match:
             members_text = f"{match.group(1)} članova"
         else:
-            if not is_bad and status_text:
-                members_text = status_text
-            elif is_bad:
-                members_text = "Grupa je puna/zatvorena"
+            if is_invalid_or_full:
+                members_text = "Nevažeći / Pun kod"
+            else:
+                members_text = "Aktivna"
 
-        return status_text, members_text, is_bad
+        return "", members_text, is_invalid_or_full
     except Exception as e:
         logger.error(f"Greška pri parsiranju sajta za kod {code}: {e}")
         return "Greška", "N/A", False
@@ -140,7 +142,7 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Komanda /aktivno otvorena za sve korisnike.
     Prikazuje osnivača, preostale minute, broj članova i dugme sa linkom.
-    Automatski izbacuje kodove koji su u međuvremenu postali puni.
+    Automatski izbacuje kodove koji su u međuvremenu postali puni ili nevažeći.
     """
     load_codes()
 
@@ -160,9 +162,9 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             expired_found = True
             continue
 
-        # Provera sa sajta – ako je grupa puna, uklanjamo je iz aktivnih
-        _, _, is_full = get_group_status_from_web(code)
-        if is_full:
+        # Provera sa sajta – ako je kod nevažeći ili pun, uklanjamo ga
+        _, _, is_invalid_or_full = get_group_status_from_web(code)
+        if is_invalid_or_full:
             expired_found = True
             continue
 
@@ -222,8 +224,8 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
     """
-    Pozadinski zadatak koji se izvršava na svakih 60 sekundi (1 minut).
-    Proverava sve aktivne kodove i briše punorske/istečene.
+    Pozadinski zadatak koji se izvršava na svakih 60 sekundi.
+    Proverava sve aktivne kodove i briše nevažeće, pune ili istečene.
     """
     load_codes()
     if not ACTIVE_CODES:
@@ -237,8 +239,8 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
             codes_to_remove.append(code)
             continue
 
-        _, _, is_full = get_group_status_from_web(code)
-        if is_full:
+        _, _, is_invalid_or_full = get_group_status_from_web(code)
+        if is_invalid_or_full:
             codes_to_remove.append(code)
             founder_name = data.get("founder", "Osnivač")
             chat_id = data.get("chat_id")
@@ -246,18 +248,18 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(
                         chat_id=chat_id,
-                        text=f"⚠️ <b>Mining grupa za kod {code} (Founder: {founder_name}) je PUNA ili zatvorena!</b>\nKod je uklonjen iz aktivnih.",
+                        text=f"⚠️ <b>Kod {code} (Founder: {founder_name}) je nevažeći ili puna grupa!</b>\nKod je uklonjen iz aktivnih.",
                         parse_mode="HTML"
                     )
                 except Exception as e:
-                    logger.error(f"Greška pri slanju obaveštenja da je grupa puna: {e}")
+                    logger.error(f"Greška pri slanju obaveštenja: {e}")
 
     if codes_to_remove:
         for code in codes_to_remove:
             if code in ACTIVE_CODES:
                 del ACTIVE_CODES[code]
         save_codes()
-        logger.info(f"Pozadinski job uklonio kodove zbog popunjenosti/isteka: {codes_to_remove}")
+        logger.info(f"Pozadinski job uklonio nevažeće/pune kodove: {codes_to_remove}")
 
 
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -323,16 +325,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code))
 
         if is_valid_format:
-            # NOVO: Provera statusa sa sajta PRE prihvatanja koda!
-            _, _, is_full = get_group_status_from_web(code)
-            if is_full:
+            # Provera statusa sa sajta PRE prihvatanja koda
+            _, _, is_invalid_or_full = get_group_status_from_web(code)
+            if is_invalid_or_full:
                 try:
                     await update.message.delete()
                 except Exception:
                     pass
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text=f"❌ Kod <b>{code}</b> je već <b>PUN</b> ili zatvoren na sajtu! Nije prihvaćen.",
+                    text=f"❌ Kod <b>{code}</b> je <b>nevažeći</b> ili je grupa već <b>puna</b> na sajtu! Nije prihvaćen.",
                     parse_mode="HTML"
                 )
                 return
@@ -397,8 +399,8 @@ async def restore_jobs_on_startup(app):
             expired_found = True
         else:
             # Provera sa sajta pri restartu
-            _, _, is_full = get_group_status_from_web(code)
-            if is_full:
+            _, _, is_invalid_or_full = get_group_status_from_web(code)
+            if is_invalid_or_full:
                 expired_found = True
                 continue
 
@@ -442,7 +444,7 @@ def main():
             name="background_group_check"
         )
 
-    logger.info("Bot uspešno pokrenut sa pametnim proverama statusa...")
+    logger.info("Bot uspešno pokrenut sa proširenim proverama za nevažeće i pune kodove...")
     app.run_polling()
 
 if __name__ == "__main__":
