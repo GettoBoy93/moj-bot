@@ -70,24 +70,18 @@ def save_codes():
         logger.error(f"Greška pri čuvanju kodova: {e}")
 
 def check_is_founder(user) -> bool:
-    if not user:
+    """Proverava da li je korisnik osnivač (case-insensitive, sa ili bez @)."""
+    if not user or not user.username:
         return False
-    if user.id in FOUNDERS:
-        return True
-    if user.username:
-        user_uname = f"@{user.username}".lower()
-        founders_lower = [str(f).lower() for f in FOUNDERS]
-        if user_uname in founders_lower:
-            return True
-    return False
+    
+    user_uname = f"@{user.username.lstrip('@')}".lower()
+    founders_lower = [str(f).lower() for f in FOUNDERS]
+    
+    return user_uname in founders_lower
 
 
 def get_group_status_from_web(code: str):
-    """
-    Poboljšana funkcija sa restriktivnom (whitelist) proverom:
-    Kod je validan SAMO ako sajt eksplicitno vrati podatke o grupi/članovima,
-    a sve greške, Cloudflare blokade ili sumnjivi odgovori se tretiraju kao nevažeći.
-    """
+    """Proverava status koda na sajtu."""
     url = f"https://miningperia.com/pages/join.php?custom={code}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -98,20 +92,12 @@ def get_group_status_from_web(code: str):
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code != 200:
-            logger.warning(f"Sajt je vratio status {response.status_code} za kod {code}")
-            return "Greška", "Blokiran/Greška servera", True
+            return "Nepoznato", "Aktivna", False
 
         soup = BeautifulSoup(response.text, "html.parser")
         page_text = soup.get_text()
         page_text_lower = page_text.lower()
         
-        # 1. Provera za Cloudflare / bot zaštitu
-        cloudflare_phrases = ["cloudflare", "checking your browser", "access denied", "ray id", "attention required"]
-        if any(cf in page_text_lower for cf in cloudflare_phrases):
-            logger.warning(f"Cloudflare zaštita detektovana za kod {code}")
-            return "Greška", "Cloudflare zaštita", True
-
-        # 2. Provera eksplicitnih poruka o nevažećem kodu
         bad_phrases = [
             "already started or is full", 
             "is full", 
@@ -123,20 +109,16 @@ def get_group_status_from_web(code: str):
         if any(phrase in page_text_lower for phrase in bad_phrases):
             return "Nevažeći", "Nevažeći / Pun kod", True
 
-        # 3. Pozitivna potvrda (Whitelist): Tražimo broj članova ili potvrdu postojanja grupe
+        members_text = "Aktivna"
         match = re.search(r'(\d+)\s+joined', page_text, re.IGNORECASE)
         if match:
             members_text = f"{match.group(1)} članova"
-            return "", members_text, False
-        
-        if "mining group invite" in page_text_lower:
-            return "", "Aktivna", False
 
-        return "Nevažeći", "Nepoznat format stranice", True
+        return "", members_text, False
 
     except Exception as e:
         logger.error(f"Greška pri parsiranju sajta za kod {code}: {e}")
-        return "Greška", "N/A", True
+        return "Greška", "N/A", False
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -148,11 +130,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Komanda /aktivno otvorena za sve korisnike.
-    Prikazuje osnivača, preostale minute, broj članova i dugme sa linkom.
-    Automatski izbacuje kodove koji su u međuvremenu postali puni ili nevažeći.
-    """
+    """Komanda /aktivno otvorena za sve korisnike."""
     load_codes()
 
     if not ACTIVE_CODES:
@@ -231,10 +209,7 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Pozadinski zadatak koji se izvršava na svakih 60 sekundi.
-    Proverava sve aktivne kodove i briše nevažeće, pune ili istečene.
-    """
+    """Pozadinski zadatak za proveru isteka i statusa kodova."""
     load_codes()
     if not ACTIVE_CODES:
         return
@@ -305,7 +280,7 @@ async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def auto_expire_code(context: ContextTypes.DEFAULT_TYPE):
-    """Automatsko brisanje koda iz memorije nakon 60 minuta (3600 sekundi)."""
+    """Automatsko brisanje koda iz memorije nakon 60 minuta."""
     code = context.job.data
     load_codes()
     if code in ACTIVE_CODES:
@@ -329,11 +304,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(parts) > 1:
                 code = parts[1].strip()
 
-        # Provera formata: tačno 6 karaktera (velika slova i/ili brojevi sa bar jednim slovom)
         is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code))
 
         if is_valid_format:
-            # Provera statusa sa sajta PRE prihvatanja koda
             _, _, is_invalid_or_full = get_group_status_from_web(code)
             if is_invalid_or_full:
                 try:
@@ -419,7 +392,6 @@ async def restore_jobs_on_startup(app):
                     data=code,
                     name=f"expire_{code}"
                 )
-                logger.info(f"Obnovljen tajmer za kod {code}: preostalo {int(remaining)} sekundi.")
 
     if expired_found:
         ACTIVE_CODES.clear()
@@ -451,7 +423,7 @@ def main():
             name="background_group_check"
         )
 
-    logger.info("Bot uspešno pokrenut sa restriktivnom proverom validnosti kodova...")
+    logger.info("Bot uspešno pokrenut...")
     app.run_polling()
 
 if __name__ == "__main__":
