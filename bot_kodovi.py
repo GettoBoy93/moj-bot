@@ -73,12 +73,19 @@ def save_codes():
 def check_is_founder(user) -> bool:
     """Proverava da li je korisnik osnivač (case-insensitive, sa ili bez @)."""
     if not user or not user.username:
+        logger.warning(f"Korisnik '{user.first_name if user else 'Unknown'}' nema podešen Telegram username (@)!")
         return False
     
-    user_uname = f"@{user.username.lstrip('@')}".lower()
-    founders_lower = [str(f).lower() for f in FOUNDERS]
+    clean_user = user.username.strip().lstrip('@').lower()
+    founders_clean = [str(f).strip().lstrip('@').lower() for f in FOUNDERS]
     
-    return user_uname in founders_lower
+    is_founder = clean_user in founders_clean
+    if not is_founder:
+        logger.warning(f"ODBIJEN: Korisnik @{user.username} (ID: {user.id}) NIJE u listi osnivača!")
+    else:
+        logger.info(f"USPEŠNO PREPOZNAT OSNIVAČ: @{user.username}")
+        
+    return is_founder
 
 
 def get_group_status_from_web(code: str):
@@ -297,6 +304,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user = update.effective_user
 
+    logger.info(f"Nova poruka u grupi od [{user.first_name}, @{user.username}]: '{text}'")
+
     if check_is_founder(user):
         code = text.upper()
         
@@ -307,63 +316,66 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code))
 
-        if is_valid_format:
-            _, _, is_invalid_or_full = get_group_status_from_web(code)
-            if is_invalid_or_full:
-                try:
-                    await update.message.delete()
-                except Exception:
-                    pass
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f"❌ Kod <b>{code}</b> je <b>nevažeći</b> ili je grupa već <b>puna</b> na sajtu! Nije prihvaćen.",
-                    parse_mode="HTML"
-                )
-                return
+        if not is_valid_format:
+            logger.warning(f"Poruka od osnivača @{user.username} ('{code}') nije u formatu 6 alfanumeričkih znakova.")
+            return
 
-            founder_name = f"@{user.username}" if user.username else user.first_name
-
-            load_codes()
-            ACTIVE_CODES[code] = {
-                "founder": founder_name,
-                "created_at": time.time(),
-                "chat_id": update.effective_chat.id
-            }
-            save_codes()
-
-            if context.job_queue:
-                context.job_queue.run_once(
-                    auto_expire_code,
-                    when=3600,
-                    data=code,
-                    name=f"expire_{code}"
-                )
-
+        _, _, is_invalid_or_full = get_group_status_from_web(code)
+        if is_invalid_or_full:
             try:
                 await update.message.delete()
-            except Exception as e:
-                logger.warning(f"Nije moguće obrisati poruku: {e}")
-
-            generated_link = f"https://miningperia.com/pages/join.php?custom={code}"
-
-            keyboard = [
-                [InlineKeyboardButton("🚀 Preuzmi Kod", url=generated_link)]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            founder_safe = html.escape(founder_name)
-
+            except Exception:
+                pass
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=(
-                    f"🔥 <b>NOVI PROMO KOD!</b> 🔥\n\n"
-                    f"Founder: <b>{founder_safe}</b>\n\n"
-                    f"Kliknite na dugme ispod da preuzmete nagradu!"
-                ),
-                reply_markup=reply_markup,
+                text=f"❌ Kod <b>{code}</b> je <b>nevažeći</b> ili je grupa već <b>puna</b> na sajtu! Nije prihvaćen.",
                 parse_mode="HTML"
             )
             return
+
+        founder_name = f"@{user.username}" if user.username else user.first_name
+
+        load_codes()
+        ACTIVE_CODES[code] = {
+            "founder": founder_name,
+            "created_at": time.time(),
+            "chat_id": update.effective_chat.id
+        }
+        save_codes()
+
+        if context.job_queue:
+            context.job_queue.run_once(
+                auto_expire_code,
+                when=3600,
+                data=code,
+                name=f"expire_{code}"
+            )
+
+        try:
+            await update.message.delete()
+        except Exception as e:
+            logger.warning(f"Nije moguće obrisati poruku: {e}")
+
+        generated_link = f"https://miningperia.com/pages/join.php?custom={code}"
+
+        keyboard = [
+            [InlineKeyboardButton("🚀 Preuzmi Kod", url=generated_link)]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        founder_safe = html.escape(founder_name)
+
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=(
+                f"🔥 <b>NOVI PROMO KOD!</b> 🔥\n\n"
+                f"Founder: <b>{founder_safe}</b>\n\n"
+                f"Kliknite na dugme ispod da preuzmete nagradu!"
+            ),
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        return
 
 
 async def restore_jobs_on_startup(app):
@@ -424,7 +436,7 @@ def main():
             name="background_group_check"
         )
 
-    logger.info("Bot uspešno pokrenut...")
+    logger.info("Bot uspešno pokrenut sa proširenim logovanjem i proverom osnivača...")
     app.run_polling()
 
 if __name__ == "__main__":
