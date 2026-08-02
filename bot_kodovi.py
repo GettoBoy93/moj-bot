@@ -5,7 +5,7 @@ import json
 import logging
 import html
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, time as dt_time, timedelta
 from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -22,12 +22,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Fajl za trajno čuvanje kodova na serveru
+# Fajlovi za trajno čuvanje podataka na serveru
 DATA_FILE = "active_codes.json"
-ACTIVE_CODES = {}
-
-# Fajl za praćenje dnevnih statusa slanja kodova foundera
 STATUS_FILE = "founder_statuses.json"
+CHAT_ID_FILE = "last_chat_id.json"
+
+ACTIVE_CODES = {}
 FOUNDER_STATUSES = {}
 
 # Raspored foundera sa satnicama
@@ -118,6 +118,25 @@ def save_statuses():
             json.dump(FOUNDER_STATUSES, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Greška pri čuvanju statusa: {e}")
+
+def save_chat_id(chat_id):
+    """Čuva ID poslednjeg aktivnog četa/grupe za slanje podsetnika."""
+    try:
+        with open(CHAT_ID_FILE, "w", encoding="utf-8") as f:
+            json.dump({"chat_id": chat_id}, f)
+    except Exception as e:
+        logger.error(f"Greška pri čuvanju chat_id: {e}")
+
+def get_chat_id():
+    """Učitava sačuvani chat ID grupe."""
+    if os.path.exists(CHAT_ID_FILE):
+        try:
+            with open(CHAT_ID_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("chat_id")
+        except Exception:
+            return None
+    return None
 
 def get_current_game_date():
     """Dan se resetuje u 02:00 ujutru. Sve pre 02:00 pripada prethodnom danu."""
@@ -300,6 +319,44 @@ async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Greška pri slanju /lista poruke: {e}")
 
 
+async def founder_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    """Pozadinski zadatak za slanje podsetnika 15 minuta pre termina."""
+    job_data = context.job.data
+    username = job_data["username"]
+    original_time = job_data["original_time"]
+
+    # Ako je founder već poslao kod danas, ne šaljemo podsetnik
+    if get_founder_status(username):
+        return
+
+    chat_id = get_chat_id()
+    if not chat_id:
+        return
+
+    text = f"Hej {username}, u {original_time} je tvoj red za kod!"
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=text)
+    except Exception as e:
+        logger.error(f"Greška pri slanju podsetnika za {username}: {e}")
+
+
+def setup_reminders(app):
+    """Podešava dnevne podsetnike 15 minuta pre svakog termina iz rasporeda."""
+    if not app.job_queue:
+        return
+    for time_str, username in SCHEDULE:
+        dt = datetime.strptime(time_str, "%H:%M")
+        reminder_dt = dt - timedelta(minutes=15)
+        reminder_time = reminder_dt.time()
+
+        app.job_queue.run_daily(
+            founder_reminder_job,
+            time=reminder_time,
+            data={"username": username, "original_time": time_str},
+            name=f"reminder_{username}"
+        )
+
+
 async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
     """Pozadinski zadatak za proveru isteka i statusa kodova."""
     load_codes()
@@ -384,6 +441,9 @@ async def auto_expire_code(context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
+
+    if update.effective_chat:
+        save_chat_id(update.effective_chat.id)
 
     text = update.message.text.strip()
     user = update.effective_user
@@ -513,6 +573,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
     if app.job_queue:
+        setup_reminders(app)
         app.job_queue.run_once(lambda ctx: restore_jobs_on_startup(app), when=1)
         app.job_queue.run_repeating(
             background_group_check_job,
