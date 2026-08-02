@@ -5,6 +5,7 @@ import json
 import logging
 import html
 import requests
+from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -24,6 +25,32 @@ logger = logging.getLogger(__name__)
 # Fajl za trajno čuvanje kodova na serveru
 DATA_FILE = "active_codes.json"
 ACTIVE_CODES = {}
+
+# Fajl za praćenje dnevnih statusa slanja kodova foundera
+STATUS_FILE = "founder_statuses.json"
+FOUNDER_STATUSES = {}
+
+# Raspored foundera sa satnicama
+SCHEDULE = [
+    ("06:00", "@Roboda66"),
+    ("07:00", "@jagodica113"),
+    ("08:00", "@PeroPericaVezo"),
+    ("09:00", "@Jovanj79"),
+    ("10:00", "@Josip0107"),
+    ("11:00", "@rajder987"),
+    ("12:00", "@Stuxnet992"),
+    ("13:00", "@RaDe013"),
+    ("14:00", "@Alessandro1973Vuk"),
+    ("15:00", "@Goran1974m"),
+    ("16:00", "@dulehak"),
+    ("17:00", "@Bahro67"),
+    ("18:00", "@evanescence83"),
+    ("19:00", "@Djenedjenee"),
+    ("20:00", "@aei123_AI"),
+    ("21:00", "@Snave31"),
+    ("22:00", "@PERIABOY"),
+    ("23:00", "@Iken2014"),
+]
 
 # SVIH ZVANIČNIH FOUNDER-A
 FOUNDERS = [
@@ -70,6 +97,53 @@ def save_codes():
             json.dump(ACTIVE_CODES, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Greška pri čuvanju kodova: {e}")
+
+def load_statuses():
+    """Učitava dnevne statuse slanja kodova."""
+    global FOUNDER_STATUSES
+    if os.path.exists(STATUS_FILE):
+        try:
+            with open(STATUS_FILE, "r", encoding="utf-8") as f:
+                FOUNDER_STATUSES = json.load(f)
+        except Exception as e:
+            logger.error(f"Greška pri učitavanju statusa: {e}")
+            FOUNDER_STATUSES = {}
+    else:
+        FOUNDER_STATUSES = {}
+
+def save_statuses():
+    """Čuva dnevne statuse slanja kodova."""
+    try:
+        with open(STATUS_FILE, "w", encoding="utf-8") as f:
+            json.dump(FOUNDER_STATUSES, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Greška pri čuvanju statusa: {e}")
+
+def get_current_game_date():
+    """Dan se resetuje u 02:00 ujutru. Sve pre 02:00 pripada prethodnom danu."""
+    now = datetime.now()
+    if now.hour < 2:
+        game_date = (now - timedelta(days=1)).date()
+    else:
+        game_date = now.date()
+    return str(game_date)
+
+def get_founder_status(username: str) -> bool:
+    """Proverava da li je founder poslao kod danas (True = poslao/X, False = čeka/⏳)."""
+    load_statuses()
+    g_date = get_current_game_date()
+    if g_date not in FOUNDER_STATUSES:
+        FOUNDER_STATUSES[g_date] = {}
+    return FOUNDER_STATUSES[g_date].get(username.lower(), False)
+
+def set_founder_status(username: str, status: bool):
+    """Postavlja status slanja koda za foundera za tekući dan."""
+    load_statuses()
+    g_date = get_current_game_date()
+    if g_date not in FOUNDER_STATUSES:
+        FOUNDER_STATUSES[g_date] = {}
+    FOUNDER_STATUSES[g_date][username.lower()] = status
+    save_statuses()
 
 def check_is_founder(user) -> bool:
     """Proverava da li je korisnik osnivač (case-insensitive, sa ili bez @)."""
@@ -210,6 +284,22 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(poruka_plain, reply_markup=reply_markup)
 
 
+async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Komanda /lista za prikaz rasporeda foundera i statusa slanja kodova."""
+    g_date = get_current_game_date()
+    text = f"📊 <b>RASPORED FOUNDERA ({g_date})</b>\n\n"
+
+    for time_str, username in SCHEDULE:
+        has_sent = get_founder_status(username)
+        icon = '❌' if has_sent else '⏳'
+        text += f"<code>{time_str}</code> | {username} | {icon}\n"
+
+    try:
+        await update.message.reply_text(text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Greška pri slanju /lista poruke: {e}")
+
+
 async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
     """Pozadinski zadatak za proveru isteka i statusa kodova."""
     load_codes()
@@ -332,6 +422,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             save_codes()
 
+            # Zabeleži da je founder uspešno poslao kod za danas (prebacuje na ❌)
+            if user.username:
+                set_founder_status(f"@{user.username}", True)
+
             if context.job_queue:
                 context.job_queue.run_once(
                     auto_expire_code,
@@ -408,11 +502,13 @@ def main():
         return
 
     load_codes()
+    load_statuses()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("aktivno", aktivno_command))
+    app.add_handler(CommandHandler("lista", lista_command))
     app.add_handler(CommandHandler(["obrisi", "del"], obrisi_command))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
