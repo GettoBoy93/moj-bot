@@ -38,8 +38,8 @@ TZ = ZoneInfo("Europe/Belgrade")
 SCHEDULE = [
     ("06:00", "@Roboda66"),
     ("07:00", "@jagodica113"),
-    ("08:00", "@PeroPericaVezo"),
-    ("09:00", "@Jovanj79"),
+    ("08:00", "@Jovanj79"),
+    ("09:00", "@PeroPericaVezo"),
     ("10:00", "@Josip0107"),
     ("11:00", "@rajder987"),
     ("12:00", "@Stuxnet992"),
