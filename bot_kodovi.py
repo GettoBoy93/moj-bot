@@ -350,7 +350,10 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
             reminder_dt = dt - timedelta(minutes=15)
             reminder_time_str = reminder_dt.strftime("%H:%M")
 
-            if current_time_str == reminder_time_str:
+            # Umesto tačnog minuta (==), koristimo VREMENSKI PROZOR
+            # Ako je trenutno vreme između vremena podsetnika (npr. 10:45) i termina koda (11:00)
+            if reminder_time_str <= current_time_str < time_str:
+                
                 # Ako je founder već poslao kod danas, preskačemo podsetnik
                 if FOUNDER_STATUSES[g_date].get(username.lower(), False):
                     continue
@@ -594,10 +597,10 @@ def main():
 
     if app.job_queue:
         app.job_queue.run_once(lambda ctx: restore_jobs_on_startup(app), when=1)
-        # Pokreće se na svakih 60 sekundi i proverava i podsetnike i istek kodova
+        # Smanjen interval provere na 30 sekundi radi veće preciznosti
         app.job_queue.run_repeating(
             background_group_check_job,
-            interval=60,
+            interval=30,
             first=10,
             name="background_group_check"
         )
