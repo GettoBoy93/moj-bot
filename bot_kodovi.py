@@ -6,6 +6,7 @@ import logging
 import html
 import requests
 from datetime import datetime, time as dt_time, timedelta
+from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -29,6 +30,9 @@ CHAT_ID_FILE = "last_chat_id.json"
 
 ACTIVE_CODES = {}
 FOUNDER_STATUSES = {}
+
+# Vremenska zona za naše podsetnike (Srbija)
+TZ = ZoneInfo("Europe/Belgrade")
 
 # Raspored foundera sa satnicama
 SCHEDULE = [
@@ -139,8 +143,8 @@ def get_chat_id():
     return None
 
 def get_current_game_date():
-    """Dan se resetuje u 02:00 ujutru. Sve pre 02:00 pripada prethodnom danu."""
-    now = datetime.now()
+    """Dan se resetuje u 02:00 ujutru po našem vremenu. Sve pre 02:00 pripada prethodnom danu."""
+    now = datetime.now(TZ)
     if now.hour < 2:
         game_date = (now - timedelta(days=1)).date()
     else:
@@ -218,6 +222,9 @@ def get_group_status_from_web(code: str):
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Odgovor na /start komandu."""
+    if update.effective_chat:
+        save_chat_id(update.effective_chat.id)
+
     await update.message.reply_text(
         "👋 Zdravo! Dobrodošli u MiningPeria promo bot.\n\n"
         "Upotrebite komandu /aktivno da vidite trenutno dostupne promo kodove!"
@@ -226,6 +233,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /aktivno otvorena za sve korisnike."""
+    if update.effective_chat:
+        save_chat_id(update.effective_chat.id)
+
     load_codes()
 
     if not ACTIVE_CODES:
@@ -305,6 +315,9 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /lista za prikaz rasporeda foundera i statusa slanja kodova."""
+    if update.effective_chat:
+        save_chat_id(update.effective_chat.id)
+
     g_date = get_current_game_date()
     text = f"📊 <b>RASPORED FOUNDERA ({g_date})</b>\n\n"
 
@@ -325,29 +338,35 @@ async def founder_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     username = job_data["username"]
     original_time = job_data["original_time"]
 
+    logger.info(f"Pokrenut reminder job za {username} (termin: {original_time})")
+
     # Ako je founder već poslao kod danas, ne šaljemo podsetnik
     if get_founder_status(username):
+        logger.info(f"Founder {username} je već poslao kod danas, podsetnik preskočen.")
         return
 
     chat_id = get_chat_id()
     if not chat_id:
+        logger.error("GREŠKA: Nema sačuvanog chat_id za slanje podsetnika! Pošaljite poruku ili komandu u grupu da bot zabeleži čet.")
         return
 
     text = f"Hej {username}, u {original_time} je tvoj red za kod!"
     try:
         await context.bot.send_message(chat_id=chat_id, text=text)
+        logger.info(f"Uspešno poslat podsetnik za {username} na chat_id: {chat_id}")
     except Exception as e:
         logger.error(f"Greška pri slanju podsetnika za {username}: {e}")
 
 
 def setup_reminders(app):
-    """Podešava dnevne podsetnike 15 minuta pre svakog termina iz rasporeda."""
+    """Podešava dnevne podsetnike 15 minuta pre svakog termina iz rasporeda u lokalnoj vremenskoj zoni."""
     if not app.job_queue:
         return
     for time_str, username in SCHEDULE:
-        dt = datetime.strptime(time_str, "%H:%M")
-        reminder_dt = dt - timedelta(minutes=15)
-        reminder_time = reminder_dt.time()
+        h, m = map(int, time_str.split(":"))
+        # Kreiramo datetime objekat sa našom vremenskom zonom i oduzimamo 15 minuta
+        dt = datetime(2026, 1, 1, h, m, tzinfo=TZ) - timedelta(minutes=15)
+        reminder_time = dt.time()
 
         app.job_queue.run_daily(
             founder_reminder_job,
@@ -355,6 +374,7 @@ def setup_reminders(app):
             data={"username": username, "original_time": time_str},
             name=f"reminder_{username}"
         )
+    logger.info("Uspešno postavljeni svi dnevni podsetnici za foundere.")
 
 
 async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
@@ -396,6 +416,9 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /obrisi KOD ili /del KOD za osnivače."""
+    if update.effective_chat:
+        save_chat_id(update.effective_chat.id)
+
     user = update.effective_user
 
     if not check_is_founder(user):
