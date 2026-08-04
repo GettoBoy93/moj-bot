@@ -52,13 +52,14 @@ SCHEDULE = [
     ("19:00", "@Djenedjenee"),
     ("20:00", "@aei123_AI"),
     ("21:00", "@Snave31"),
-    ("22:00", "@PERIABOY"),
+    ("22:00", "@cze987"),
     ("23:00", "@Iken2014"),
 ]
 
 # SVIH ZVANIČNIH FOUNDER-A
 FOUNDERS = [
     "@PERIABOY",
+    "@cze987",
     "@jagodica113",
     "@Alessandro1973Vuk",
     "@Djenedjenee",
@@ -414,6 +415,15 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Pozadinski job uklonio nevažeće/pune kodove: {codes_to_remove}")
 
 
+async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
+    """Funkcija za brisanje poruke na osnovu ID-a prosleđenog kroz job.data."""
+    job = context.job
+    try:
+        await context.bot.delete_message(chat_id=job.data['chat_id'], message_id=job.data['message_id'])
+    except Exception as e:
+        logger.warning(f"Nije moguće obrisati poruku (možda je već obrisana): {e}")
+
+
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /obrisi KOD ili /del KOD za osnivače."""
     if update.effective_chat:
@@ -440,14 +450,22 @@ async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if code_to_delete in ACTIVE_CODES:
         del ACTIVE_CODES[code_to_delete]
         save_codes()
-        await context.bot.send_message(
+        sent_msg = await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"✅ Promo kod {code_to_delete} je uspešno uklonjen iz aktivnih kodova."
         )
     else:
-        await context.bot.send_message(
+        sent_msg = await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Kod {code_to_delete} nije pronađen među aktivnim kodovima."
+        )
+
+    # Zakaži brisanje ove poruke potvrde za 10 sekundi
+    if context.job_queue:
+        context.job_queue.run_once(
+            delete_message_job,
+            when=10,
+            data={'chat_id': sent_msg.chat_id, 'message_id': sent_msg.message_id}
         )
 
 
