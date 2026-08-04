@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ChatType
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -223,7 +224,8 @@ def get_group_status_from_web(code: str):
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Odgovor na /start komandu."""
-    if update.effective_chat:
+    # Obeležavamo ID samo ako je komanda pozvana u grupi
+    if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
     await update.message.reply_text(
@@ -234,7 +236,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /aktivno otvorena za sve korisnike."""
-    if update.effective_chat:
+    # Obeležavamo ID samo ako je komanda pozvana u grupi
+    if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
     load_codes()
@@ -316,7 +319,8 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /lista za prikaz rasporeda foundera i statusa slanja kodova."""
-    if update.effective_chat:
+    # Obeležavamo ID samo ako je komanda pozvana u grupi
+    if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
     g_date = get_current_game_date()
@@ -426,7 +430,8 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /obrisi KOD ili /del KOD za osnivače."""
-    if update.effective_chat:
+    # Obeležavamo ID samo ako je komanda pozvana u grupi
+    if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
     user = update.effective_user
@@ -483,7 +488,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    if update.effective_chat:
+    # Obeležavamo ID samo ako je komanda pozvana u grupi
+    if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
     text = update.message.text.strip()
