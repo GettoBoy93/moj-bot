@@ -42,8 +42,8 @@ SCHEDULE = [
     ("08:00", "@Jovanj79"),
     ("09:00", "@PeroPericaVezo"),
     ("10:00", "@Josip0107"),
-    ("11:00", "@rajder987"),
-    ("12:00", "@Stuxnet992"),
+    ("11:00", "@Stuxnet992"),
+    ("12:00", "@rajder987"),
     ("13:00", "@RaDe013"),
     ("14:00", "@Alessandro1973Vuk"),
     ("15:00", "@Goran1974m"),
@@ -630,6 +630,9 @@ def main():
         )
 
     logger.info("Bot uspešno pokrenut...")
+    logger.info(f"Sistemsko vreme servera: {datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Učitani Chat ID za podsetnike: {get_chat_id()}")
+    
     app.run_polling()
 
 if __name__ == "__main__":
