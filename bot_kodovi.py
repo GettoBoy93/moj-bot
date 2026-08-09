@@ -153,21 +153,25 @@ def get_current_game_date():
         game_date = now.date()
     return str(game_date)
 
-def get_founder_status(username: str) -> bool:
-    """Proverava da li je founder poslao kod danas (True = poslao/X, False = čeka/⏳)."""
+def get_founder_code_count(username: str) -> int:
+    """Vraća broj poslatih kodova za foundera za tekući dan."""
     load_statuses()
     g_date = get_current_game_date()
     if g_date not in FOUNDER_STATUSES:
         FOUNDER_STATUSES[g_date] = {}
-    return FOUNDER_STATUSES[g_date].get(username.lower(), False)
+    val = FOUNDER_STATUSES[g_date].get(username.lower(), 0)
+    if isinstance(val, bool):
+        return 1 if val else 0
+    return int(val) if isinstance(val, (int, float)) else 0
 
-def set_founder_status(username: str, status: bool):
-    """Postavlja status slanja koda za foundera za tekući dan."""
+def increment_founder_status(username: str):
+    """Povećava brojač poslatih kodova za foundera za tekući dan."""
     load_statuses()
     g_date = get_current_game_date()
     if g_date not in FOUNDER_STATUSES:
         FOUNDER_STATUSES[g_date] = {}
-    FOUNDER_STATUSES[g_date][username.lower()] = status
+    current_count = get_founder_code_count(username)
+    FOUNDER_STATUSES[g_date][username.lower()] = current_count + 1
     save_statuses()
 
 def check_is_founder(user) -> bool:
@@ -318,7 +322,7 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Komanda /lista za prikaz rasporeda foundera i statusa slanja kodova."""
+    """Komanda /lista za prikaz rasporeda foundera i broja poslatih kodova."""
     # Obeležavamo ID samo ako je komanda pozvana u grupi
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
@@ -327,9 +331,8 @@ async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"📊 <b>RASPORED FOUNDERA ({g_date})</b>\n\n"
 
     for time_str, username in SCHEDULE:
-        has_sent = get_founder_status(username)
-        icon = '❌' if has_sent else '⏳'
-        text += f"<code>{time_str}</code> | {username} | {icon}\n"
+        count = get_founder_code_count(username)
+        text += f"<code>{time_str}</code> | {username} | {count}\n"
 
     try:
         await update.message.reply_text(text, parse_mode="HTML")
@@ -359,8 +362,8 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
             # Ako je trenutno vreme između vremena podsetnika (npr. 10:45) i termina koda (11:00)
             if reminder_time_str <= current_time_str < time_str:
                 
-                # Ako je founder već poslao kod danas, preskačemo podsetnik
-                if FOUNDER_STATUSES[g_date].get(username.lower(), False):
+                # Ako je founder već poslao bar jedan kod danas, preskačemo podsetnik
+                if get_founder_code_count(username) > 0:
                     continue
 
                 # Provera da li je podsetnik za ovaj termin već poslat danas
@@ -538,9 +541,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             save_codes()
 
-            # Zabeleži da je founder uspešno poslao kod za danas (prebacuje na ❌)
+            # Uvećava brojač poslatih kodova za tog osnivača za 1
             if user.username:
-                set_founder_status(f"@{user.username}", True)
+                increment_founder_status(f"@{user.username}")
 
             if context.job_queue:
                 context.job_queue.run_once(
