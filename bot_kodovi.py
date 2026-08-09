@@ -4,6 +4,7 @@ import time
 import json
 import logging
 import html
+import asyncio
 import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -226,6 +227,16 @@ def get_group_status_from_web(code: str):
         return "Greška", "N/A", False
 
 
+async def delete_message_after_delay(bot, chat_id: int, message_id: int, delay: int):
+    """Pomoćna funkcija koja sigurno briše poruku iz četa nakon zadatog vremena (u sekundi)."""
+    await asyncio.sleep(delay)
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        logger.info(f"Poruka {message_id} uspešno obrisana nakon {delay}s.")
+    except Exception as e:
+        logger.warning(f"Nije moguće obrisati poruku {message_id}: {e}")
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Odgovor na /start komandu."""
     # Obeležavamo ID samo ako je komanda pozvana u grupi
@@ -322,7 +333,7 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Komanda /lista za prikaz rasporeda foundera i broja poslatih kodova (auto-brisanje nakon 60s)."""
+    """Komanda /lista za prikaz rasporeda foundera (auto-brisanje nakon 60s)."""
     # Obeležavamo ID samo ako je komanda pozvana u grupi
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
@@ -336,13 +347,10 @@ async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         sent_msg = await update.message.reply_text(text, parse_mode="HTML")
-        # Zakaži brisanje poruke sa rasporedom nakon 60 sekundi
-        if context.job_queue:
-            context.job_queue.run_once(
-                delete_message_job,
-                when=60,
-                data={'chat_id': sent_msg.chat_id, 'message_id': sent_msg.message_id}
-            )
+        # Pokretanje automatskog brisanja poslate poruke tačno nakon 60 sekundi
+        asyncio.create_task(
+            delete_message_after_delay(context.bot, sent_msg.chat_id, sent_msg.message_id, 60)
+        )
     except Exception as e:
         logger.error(f"Greška pri slanju /lista poruke: {e}")
 
@@ -366,7 +374,6 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
             reminder_time_str = reminder_dt.strftime("%H:%M")
 
             # Umesto tačnog minuta (==), koristimo VREMENSKI PROZOR
-            # Ako je trenutno vreme između vremena podsetnika (npr. 10:45) i termina koda (11:00)
             if reminder_time_str <= current_time_str < time_str:
                 
                 # Ako je founder već poslao bar jedan kod danas, preskačemo podsetnik
@@ -429,15 +436,6 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Pozadinski job uklonio nevažeće/pune kodove: {codes_to_remove}")
 
 
-async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
-    """Funkcija za brisanje poruke na osnovu ID-a prosleđenog kroz job.data."""
-    job = context.job
-    try:
-        await context.bot.delete_message(chat_id=job.data['chat_id'], message_id=job.data['message_id'])
-    except Exception as e:
-        logger.warning(f"Nije moguće obrisati poruku (možda je već obrisana): {e}")
-
-
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /obrisi KOD ili /del KOD za osnivače."""
     # Obeležavamo ID samo ako je komanda pozvana u grupi
@@ -475,13 +473,10 @@ async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"❌ Kod {code_to_delete} nije pronađen među aktivnim kodovima."
         )
 
-    # Zakaži brisanje ove poruke potvrde za 10 sekundi
-    if context.job_queue:
-        context.job_queue.run_once(
-            delete_message_job,
-            when=10,
-            data={'chat_id': sent_msg.chat_id, 'message_id': sent_msg.message_id}
-        )
+    # Zakaži brisanje poruke potvrde za 10 sekundi
+    asyncio.create_task(
+        delete_message_after_delay(context.bot, sent_msg.chat_id, sent_msg.message_id, 10)
+    )
 
 
 async def auto_expire_code(context: ContextTypes.DEFAULT_TYPE):
@@ -640,7 +635,6 @@ def main():
 
     if app.job_queue:
         app.job_queue.run_once(lambda ctx: restore_jobs_on_startup(app), when=1)
-        # Smanjen interval provere na 30 sekundi radi veće preciznosti
         app.job_queue.run_repeating(
             background_group_check_job,
             interval=30,
