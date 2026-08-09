@@ -322,7 +322,7 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Komanda /lista za prikaz rasporeda foundera i broja poslatih kodova."""
+    """Komanda /lista za prikaz rasporeda foundera i broja poslatih kodova (auto-brisanje nakon 60s)."""
     # Obeležavamo ID samo ako je komanda pozvana u grupi
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
@@ -335,7 +335,14 @@ async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"<code>{time_str}</code> | {username} | {count}\n"
 
     try:
-        await update.message.reply_text(text, parse_mode="HTML")
+        sent_msg = await update.message.reply_text(text, parse_mode="HTML")
+        # Zakaži brisanje poruke sa rasporedom nakon 60 sekundi
+        if context.job_queue:
+            context.job_queue.run_once(
+                delete_message_job,
+                when=60,
+                data={'chat_id': sent_msg.chat_id, 'message_id': sent_msg.message_id}
+            )
     except Exception as e:
         logger.error(f"Greška pri slanju /lista poruke: {e}")
 
