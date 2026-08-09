@@ -355,6 +355,22 @@ async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Greška pri slanju /lista poruke: {e}")
 
 
+async def founderi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Komanda /founderi za prikaz svih osnivača vertikalno sa pojedinačnim kopiranjem za svaki username."""
+    # Obeležavamo ID samo ako je komanda pozvana u grupi
+    if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        save_chat_id(update.effective_chat.id)
+
+    # Svaki username se pakuje u svoj <code> tag
+    founders_formatted = "\n".join([f"<code>{f}</code>" for f in FOUNDERS])
+    text = f"👥 <b>LISTA SVIH FOUNDERA:</b>\n\n{founders_formatted}"
+
+    try:
+        await update.message.reply_text(text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Greška pri slanju /founderi poruke: {e}")
+
+
 async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
     """Pozadinski zadatak: proverava podsetnike svakog minuta i kontroliše status/istek kodova."""
     
@@ -630,6 +646,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("aktivno", aktivno_command))
     app.add_handler(CommandHandler("lista", lista_command))
+    app.add_handler(CommandHandler("founderi", founderi_command))
     app.add_handler(CommandHandler(["obrisi", "del"], obrisi_command))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
