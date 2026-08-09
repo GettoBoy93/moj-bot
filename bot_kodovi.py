@@ -80,7 +80,8 @@ FOUNDERS = [
     "@dulehak",
     "@RaDe013",
     "@Jovanj79",
-    "@G_Nensyy"
+    "@G_Nensyy",
+    "@Bibac68"
 ]
 
 def load_codes():
@@ -356,17 +357,23 @@ async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def founderi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Komanda /founderi za prikaz svih osnivača vertikalno sa pojedinačnim kopiranjem za svaki username."""
+    """Komanda /founderi za prikaz svih osnivača vertikalno sa pojedinačnim kopiranjem za svaki username (auto-brisanje nakon 60s)."""
     # Obeležavamo ID samo ako je komanda pozvana u grupi
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
     # Svaki username se pakuje u svoj <code> tag
     founders_formatted = "\n".join([f"<code>{f}</code>" for f in FOUNDERS])
-    text = f"👥 <b>LISTA SVIH FOUNDERA:</b>\n\n{founders_formatted}"
+    total_founders = len(FOUNDERS)
+    
+    text = f"👥 <b>LISTA SVIH FOUNDERA (Ukupno: {total_founders}):</b>\n\n{founders_formatted}"
 
     try:
-        await update.message.reply_text(text, parse_mode="HTML")
+        sent_msg = await update.message.reply_text(text, parse_mode="HTML")
+        # Pokretanje automatskog brisanja poslate poruke tačno nakon 60 sekundi
+        asyncio.create_task(
+            delete_message_after_delay(context.bot, sent_msg.chat_id, sent_msg.message_id, 60)
+        )
     except Exception as e:
         logger.error(f"Greška pri slanju /founderi poruke: {e}")
 
