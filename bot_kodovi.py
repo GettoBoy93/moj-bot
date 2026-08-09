@@ -74,12 +74,12 @@ FOUNDERS = [
     "@PeroPericaVezo",
     "@Iken2014",
     "@aei123_AI",
+    "@AleksandarVujic",
     "@Roboda66",
     "@dulehak",
     "@RaDe013",
     "@Jovanj79",
-    "@G_Nensyy",
-    "@Bibac68"
+    "@G_Nensyy"
 ]
 
 def load_codes():
@@ -494,6 +494,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text.strip()
     user = update.effective_user
+
+    # --- TAGOVANJE SVIH FOUNDERA NA REČ @founderi ---
+    if "@founderi" in text.lower():
+        founders_tags = " ".join(FOUNDERS)
+        await update.message.reply_text(
+            f"📣 <b>POZIV ZA SVE FOUNDERE:</b>\n\n{founders_tags}",
+            parse_mode="HTML"
+        )
+        return
 
     if check_is_founder(user):
         code = text.upper()
