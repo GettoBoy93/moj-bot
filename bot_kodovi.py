@@ -74,7 +74,6 @@ FOUNDERS = [
     "@PeroPericaVezo",
     "@Iken2014",
     "@aei123_AI",
-    "@AleksandarVujic",
     "@Roboda66",
     "@dulehak",
     "@RaDe013",
