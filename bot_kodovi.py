@@ -81,7 +81,8 @@ FOUNDERS = [
     "@RaDe013",
     "@Jovanj79",
     "@G_Nensyy",
-    "@Bibac68"
+    "@Bibac68",
+    "@dekidib8670"
 ]
 
 def load_codes():
