@@ -53,6 +53,7 @@ SCHEDULE = [
     ("18:00", "@evanescence83"),
     ("19:00", "@Djenedjenee"),
     ("20:00", "@aei123_AI"),
+    ("20:30", "@dekidib8670"),
     ("21:00", "@Snave31"),
     ("22:00", "@cze987"),
     ("23:00", "@Iken2014"),
@@ -82,7 +83,8 @@ FOUNDERS = [
     "@Jovanj79",
     "@G_Nensyy",
     "@Bibac68",
-    "@dekidib8670"
+    "@dekidib8670",
+    "@castel62"
 ]
 
 def load_codes():
