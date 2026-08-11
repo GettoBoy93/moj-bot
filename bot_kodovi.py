@@ -523,11 +523,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
-    text = update.message.text.strip()
+    raw_text = update.message.text.strip()
     user = update.effective_user
 
     # --- TAGOVANJE SVIH FOUNDERA NA REČ @founderi ---
-    if "@founderi" in text.lower():
+    if "@founderi" in raw_text.lower():
         founders_tags = " ".join(FOUNDERS)
         await update.message.reply_text(
             f"📣 <b>POZIV ZA SVE FOUNDERE:</b>\n\n{founders_tags}",
@@ -536,27 +536,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if check_is_founder(user):
-        code = text.upper()
-        
-        if code.startswith("/KOD "):
-            parts = code.split(maxsplit=1)
-            if len(parts) > 1:
-                code = parts[1].strip()
+        has_explicit_prefix = False
 
-        is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code))
+        if raw_text.upper().startswith("/KOD "):
+            parts = raw_text.split(maxsplit=1)
+            if len(parts) > 1:
+                code_candidate = parts[1].strip().upper()
+                has_explicit_prefix = True
+            else:
+                code_candidate = ""
+        else:
+            # Direktna poruka u četu uzima se tačno onakva kakva je napisana (čuva se case-sensitivity)
+            code_candidate = raw_text
+
+        # Regex striktno zahteva tačno 6 VELIKIH SLOVA (A-Z) i/ili BROJEVA (0-9)
+        # Bilo koje malo slovo (npr. 'Saljem') dovodi do neuspeha regexa i bot ignoriše poruku
+        is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code_candidate))
 
         if is_valid_format:
+            code = code_candidate.upper()
             _, _, is_invalid_or_full = get_group_status_from_web(code)
+            
             if is_invalid_or_full:
-                try:
-                    await update.message.delete()
-                except Exception:
-                    pass
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f"❌ Kod <b>{code}</b> je <b>nevažeći</b> ili je grupa već <b>puna</b> na sajtu! Nije prihvaćen.",
-                    parse_mode="HTML"
-                )
+                # Ako je eksplicitno upotrebljena komanda /kod, obaveštavamo korisnika da je kod nevažeći
+                if has_explicit_prefix:
+                    try:
+                        await update.message.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"❌ Kod <b>{code}</b> je <b>nevažeći</b> ili je grupa već <b>puna</b> na sajtu! Nije prihvaćen.",
+                        parse_mode="HTML"
+                    )
+                # Ako je poruka bila samo reč od 6 velikih slova u četu koja nije važeća na sajtu, ignorišemo
                 return
 
             founder_name = f"@{user.username}" if user.username else user.first_name
