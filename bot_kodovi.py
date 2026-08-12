@@ -84,7 +84,8 @@ FOUNDERS = [
     "@G_Nensyy",
     "@Bibac68",
     "@dekidib8670",
-    "@castel62"
+    "@castel62",
+    "@Dragoljub1"
 ]
 
 def load_codes():
@@ -243,7 +244,6 @@ async def delete_message_after_delay(bot, chat_id: int, message_id: int, delay: 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Odgovor na /start komandu."""
-    # Obeležavamo ID samo ako je komanda pozvana u grupi
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
@@ -255,7 +255,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /aktivno otvorena za sve korisnike."""
-    # Obeležavamo ID samo ako je komanda pozvana u grupi
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
@@ -338,7 +337,6 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /lista za prikaz rasporeda foundera (auto-brisanje nakon 60s)."""
-    # Obeležavamo ID samo ako je komanda pozvana u grupi
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
@@ -351,7 +349,6 @@ async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         sent_msg = await update.message.reply_text(text, parse_mode="HTML")
-        # Pokretanje automatskog brisanja poslate poruke tačno nakon 60 sekundi
         asyncio.create_task(
             delete_message_after_delay(context.bot, sent_msg.chat_id, sent_msg.message_id, 60)
         )
@@ -361,11 +358,9 @@ async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def founderi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /founderi za prikaz svih osnivača vertikalno sa pojedinačnim kopiranjem za svaki username (auto-brisanje nakon 60s)."""
-    # Obeležavamo ID samo ako je komanda pozvana u grupi
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
-    # Svaki username se pakuje u svoj <code> tag
     founders_formatted = "\n".join([f"<code>{f}</code>" for f in FOUNDERS])
     total_founders = len(FOUNDERS)
     
@@ -373,7 +368,6 @@ async def founderi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         sent_msg = await update.message.reply_text(text, parse_mode="HTML")
-        # Pokretanje automatskog brisanja poslate poruke tačno nakon 60 sekundi
         asyncio.create_task(
             delete_message_after_delay(context.bot, sent_msg.chat_id, sent_msg.message_id, 60)
         )
@@ -383,8 +377,6 @@ async def founderi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
     """Pozadinski zadatak: proverava podsetnike svakog minuta i kontroliše status/istek kodova."""
-    
-    # 1. PROVERA I SLANJE PODSETNIKA (15 minuta pre termina)
     try:
         load_statuses()
         g_date = get_current_game_date()
@@ -399,14 +391,10 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
             reminder_dt = dt - timedelta(minutes=15)
             reminder_time_str = reminder_dt.strftime("%H:%M")
 
-            # Umesto tačnog minuta (==), koristimo VREMENSKI PROZOR
             if reminder_time_str <= current_time_str < time_str:
-                
-                # Ako je founder već poslao bar jedan kod danas, preskačemo podsetnik
                 if get_founder_code_count(username) > 0:
                     continue
 
-                # Provera da li je podsetnik za ovaj termin već poslat danas
                 reminded_key = f"reminded_{username}_{time_str}"
                 if FOUNDER_STATUSES[g_date].get(reminded_key, False):
                     continue
@@ -426,7 +414,6 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Greška u delu za podsetnike: {e}")
 
-    # 2. PROVERA I BRISANJE ISTEKLIH / NEVAŽEĆIH KODOVA
     load_codes()
     if not ACTIVE_CODES:
         return
@@ -464,7 +451,6 @@ async def background_group_check_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Komanda /obrisi KOD ili /del KOD za osnivače."""
-    # Obeležavamo ID samo ako je komanda pozvana u grupi
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
@@ -499,7 +485,6 @@ async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"❌ Kod {code_to_delete} nije pronađen među aktivnim kodovima."
         )
 
-    # Zakaži brisanje poruke potvrde za 10 sekundi
     asyncio.create_task(
         delete_message_after_delay(context.bot, sent_msg.chat_id, sent_msg.message_id, 10)
     )
@@ -519,7 +504,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    # Obeležavamo ID samo ako je komanda pozvana u grupi
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
@@ -546,11 +530,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 code_candidate = ""
         else:
-            # Direktna poruka u četu uzima se tačno onakva kakva je napisana (čuva se case-sensitivity)
             code_candidate = raw_text
 
-        # Regex striktno zahteva tačno 6 VELIKIH SLOVA (A-Z) i/ili BROJEVA (0-9)
-        # Bilo koje malo slovo (npr. 'Saljem') dovodi do neuspeha regexa i bot ignoriše poruku
         is_valid_format = bool(re.fullmatch(r'^(?=.*[A-Z])[A-Z0-9]{6}$', code_candidate))
 
         if is_valid_format:
@@ -558,7 +539,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, _, is_invalid_or_full = get_group_status_from_web(code)
             
             if is_invalid_or_full:
-                # Ako je eksplicitno upotrebljena komanda /kod, obaveštavamo korisnika da je kod nevažeći
                 if has_explicit_prefix:
                     try:
                         await update.message.delete()
@@ -569,7 +549,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text=f"❌ Kod <b>{code}</b> je <b>nevažeći</b> ili je grupa već <b>puna</b> na sajtu! Nije prihvaćen.",
                         parse_mode="HTML"
                     )
-                # Ako je poruka bila samo reč od 6 velikih slova u četu koja nije važeća na sajtu, ignorišemo
                 return
 
             founder_name = f"@{user.username}" if user.username else user.first_name
@@ -582,7 +561,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             save_codes()
 
-            # Uvećava brojač poslatih kodova za tog osnivača za 1
             if user.username:
                 increment_founder_status(f"@{user.username}")
 
