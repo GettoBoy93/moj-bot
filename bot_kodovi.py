@@ -77,7 +77,7 @@ FOUNDERS = [
     "@Iken2014",
     "@aei123_AI",
     "@AleksandarVujic",
-    "@Roboda66",
+    "@Roboda669",
     "@dulehak",
     "@RaDe013",
     "@Jovanj79",
