@@ -38,7 +38,7 @@ TZ = ZoneInfo("Europe/Belgrade")
 
 # Raspored foundera sa satnicama
 SCHEDULE = [
-    ("06:00", "@Roboda66"),
+    ("06:00", "@Roboda669"),
     ("07:00", "@jagodica113"),
     ("08:00", "@Jovanj79"),
     ("09:00", "@PeroPericaVezo"),
