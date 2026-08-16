@@ -254,14 +254,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Komanda /aktivno otvorena za sve korisnike."""
+    """Komanda /aktivno otvorena za sve korisnike (auto-brisanje nakon 60s)."""
     if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         save_chat_id(update.effective_chat.id)
 
     load_codes()
 
     if not ACTIVE_CODES:
-        await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
+        sent_msg = await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
+        asyncio.create_task(
+            delete_message_after_delay(context.bot, sent_msg.chat_id, sent_msg.message_id, 60)
+        )
         return
 
     current_time = time.time()
@@ -289,7 +292,10 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_codes()
 
     if not ACTIVE_CODES:
-        await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
+        sent_msg = await update.message.reply_text("ℹ️ Trenutno nema aktivnih promo kodova.")
+        asyncio.create_task(
+            delete_message_after_delay(context.bot, sent_msg.chat_id, sent_msg.message_id, 60)
+        )
         return
 
     poruka = "📊 <b>PREGLED AKTIVNIH PROMO KODOVA:</b>\n\n"
@@ -311,14 +317,14 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         poruka += (
             f"🔹 <b>Promo Kod #{index}</b> (Founder: {founder_safe})\n"
-            f"   • Preostalo vreme: <b>{remaining_minutes} min</b>\n"
-            f"   • Status/Članovi: <b>{members_info}</b>\n"
+            f"    • Preostalo vreme: <b>{remaining_minutes} min</b>\n"
+            f"    • Status/Članovi: <b>{members_info}</b>\n"
             f"----------------------------------\n"
         )
         poruka_plain += (
             f"🔹 Promo Kod #{index} (Founder: {founder_display})\n"
-            f"   • Preostalo vreme: {remaining_minutes} min\n"
-            f"   • Status/Članovi: {members_info}\n"
+            f"    • Preostalo vreme: {remaining_minutes} min\n"
+            f"    • Status/Članovi: {members_info}\n"
             f"----------------------------------\n"
         )
         keyboard.append([
@@ -329,10 +335,15 @@ async def aktivno_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     try:
-        await update.message.reply_text(poruka, reply_markup=reply_markup, parse_mode="HTML")
+        sent_msg = await update.message.reply_text(poruka, reply_markup=reply_markup, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Greška pri slanju HTML poruke u /aktivno: {e}")
-        await update.message.reply_text(poruka_plain, reply_markup=reply_markup)
+        sent_msg = await update.message.reply_text(poruka_plain, reply_markup=reply_markup)
+
+    if sent_msg:
+        asyncio.create_task(
+            delete_message_after_delay(context.bot, sent_msg.chat_id, sent_msg.message_id, 60)
+        )
 
 
 async def lista_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
