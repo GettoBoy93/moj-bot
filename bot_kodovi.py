@@ -552,10 +552,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if is_invalid_or_full:
                 if has_explicit_prefix:
-                    try:
-                        await update.message.delete()
-                    except Exception:
-                        pass
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
                         text=f"❌ Kod <b>{code}</b> je <b>nevažeći</b> ili je grupa već <b>puna</b> na sajtu! Nije prihvaćen.",
@@ -583,11 +579,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     data=code,
                     name=f"expire_{code}"
                 )
-
-            try:
-                await update.message.delete()
-            except Exception as e:
-                logger.warning(f"Nije moguće obrisati poruku: {e}")
 
             generated_link = f"https://miningperia.com/pages/join.php?custom={code}"
 
