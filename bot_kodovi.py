@@ -524,11 +524,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- TAGOVANJE SVIH FOUNDERA NA REČ @founderi ---
     if "@founderi" in raw_text.lower():
-        founders_tags = " ".join(FOUNDERS)
-        await update.message.reply_text(
-            f"📣 <b>POZIV ZA SVE FOUNDERE:</b>\n\n{founders_tags}",
-            parse_mode="HTML"
-        )
+        # Telegram ograničava notifikacije na max 5-10 korisnika po jednoj poruci radi sprečavanja spama.
+        # Da bi Telegram poslao notifikaciju (tag) za svih 26 foundera, šaljemo ih u grupama po 5 u razmaku od 0.5 sekundi.
+        chunk_size = 5
+        for i in range(0, len(FOUNDERS), chunk_size):
+            chunk = FOUNDERS[i:i + chunk_size]
+            founders_tags = " ".join(chunk)
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"📣 <b>POZIV ZA FOUNDERE ({i+1}-{min(i+chunk_size, len(FOUNDERS))}):</b>\n{founders_tags}",
+                parse_mode="HTML"
+            )
+            await asyncio.sleep(0.5)
         return
 
     if check_is_founder(user):
