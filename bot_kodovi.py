@@ -502,6 +502,32 @@ async def obrisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def pin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Komanda /pin za ponovno slanje trenutno pinovane poruke u čet od strane osnivača."""
+    if update.effective_chat and update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        save_chat_id(update.effective_chat.id)
+
+    user = update.effective_user
+
+    if not check_is_founder(user):
+        await update.message.reply_text("❌ Ova komanda je rezervisana samo za osnivače.")
+        return
+
+    try:
+        chat = await context.bot.get_chat(chat_id=update.effective_chat.id)
+        if chat.pinned_message:
+            await context.bot.copy_message(
+                chat_id=update.effective_chat.id,
+                from_chat_id=update.effective_chat.id,
+                message_id=chat.pinned_message.message_id
+            )
+        else:
+            await update.message.reply_text("⚠️ U ovom četu trenutno nema pinovane poruke.")
+    except Exception as e:
+        logger.error(f"Greška pri dobijanju ili slanju pinovane poruke: {e}")
+        await update.message.reply_text("❌ Greška pri preuzimanju pinovane poruke.")
+
+
 async def auto_expire_code(context: ContextTypes.DEFAULT_TYPE):
     """Automatsko brisanje koda iz memorije nakon 60 minuta."""
     code = context.job.data
@@ -659,6 +685,7 @@ def main():
     app.add_handler(CommandHandler("lista", lista_command))
     app.add_handler(CommandHandler("founderi", founderi_command))
     app.add_handler(CommandHandler(["obrisi", "del"], obrisi_command))
+    app.add_handler(CommandHandler("pin", pin_command))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
     if app.job_queue:
